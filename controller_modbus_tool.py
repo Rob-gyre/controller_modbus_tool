@@ -105,7 +105,7 @@ def run_modbus_reader():
         scale_factor = 10.0
         def_baud, def_parity, def_stop = 9600, 'N', 1
     elif profile == "2":
-        registers = {"Analog Input 1": 1, "Analog Input 2": 2, "Analog Input 3": 3}
+        registers = {"Analog Input 1": 28, "Analog Input 2": 29, "Analog Input 3": 30}
         scale_factor = 10.0
         def_baud, def_parity, def_stop = 19200, 'E', 1
     elif profile == "3":
