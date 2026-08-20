@@ -180,7 +180,7 @@ def run_modbus_reader():
 
 
 def run_carel_pjez_reader():
-    """Tool 4: Decodes Carel PJEZ ASCII proprietary protocol strings."""
+    """Tool 4: Decodes Carel PJEZ ASCII proprietary protocol strings using original driver logic."""
     print("\n=== TOOL 4: NATIVE CAREL PJEZ ASCII POLLER ===")
     port = input("Enter your serial port (e.g., /dev/ttyACM0 or COM3): ").strip()
     unit = input("Enter Carel Network Unit Address (default 1): ").strip() or "1"
@@ -226,18 +226,26 @@ def run_carel_pjez_reader():
                     body = frame[1:etx_idx].decode("ascii", errors="ignore")
                     ser.write(bytes([ACK]))
 
-                    if len(body) >= 5 and body in ["S", "U", "B"]:
-                        token = f"{body}{body[2:4]}"
+                    # FIXED: RESTORED ORIGINAL PARSING MECHANISM
+                    if len(body) >= 5 and body[0] in ["S", "U", "B"]:
+                        # Extract token characters and values cleanly matching original carel_final script
+                        token = f"{body[0]}{body[2:4]}"
                         raw = carel_hex(body[4:]) & 0xFFFF
 
+                        # Match parsed tokens up to human-friendly Mnemonics mapping dictionary
                         for mnem, (p_token, scale, signed, desc) in CAREL_PARAMS.items():
                             if p_token == token:
-                                if signed and raw >= 0x8000: raw -= 0x10000
+                                if signed and raw >= 0x8000: 
+                                    raw -= 0x10000
                                 final_val = raw / scale
-                                if scale > 1: print(f"  {mnem} ({desc}): {final_val:.1f}°C")
-                                else: print(f"  {mnem} ({desc}): {int(final_val)}")
-                except (ValueError, IndexError): pass
-                except Exception: pass
+                                if scale > 1: 
+                                    print(f"  {mnem} ({desc}): {final_val:.1f}°C")
+                                else: 
+                                    print(f"  {mnem} ({desc}): {int(final_val)}")
+                except (ValueError, IndexError): 
+                    pass
+                except Exception: 
+                    pass
             print("-" * 45)
             time.sleep(2.0)
     except KeyboardInterrupt:
