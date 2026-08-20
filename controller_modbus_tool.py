@@ -215,16 +215,17 @@ def run_carel_pjez_reader():
 
     try:
         while True:
-            # DO NOT write or clear the buffer. Just sit back and listen for the broadcast frame.
             frame = read_frame()
 
             if frame and len(frame) >= 6:
                 try:
                     etx_idx = frame.index(ETX)
                     body = frame[1:etx_idx].decode("ascii", errors="ignore")
+                    ser.write(bytes([ACK]))
 
-                    # Check if the frame body starts with Carel token characters
+                    # FIXED: Check only the FIRST character of the body string
                     if len(body) >= 5 and body[0] in ["S", "U", "B"]:
+                        # Extract the token format matching your original script layout
                         token = f"{body[0]}{body[2:4]}"
                         raw = carel_hex(body[4:]) & 0xFFFF
 
@@ -247,6 +248,7 @@ def run_carel_pjez_reader():
     finally:
         ser.close()
     input("\nPress ENTER to return to the main menu...")
+
 
 
 def main_menu():
