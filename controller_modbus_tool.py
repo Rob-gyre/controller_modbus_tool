@@ -23,7 +23,6 @@ STX, ETX, ENQ, ACK, NULL = 0x02, 0x03, 0x05, 0x06, 0x00
 
 # Carel PJEZ Parameters Maps
 CAREL_PARAMS = {
-    # Mnemonic: (Token, Scale, Signed, Description)
     "St": ("S81", 10, True, "Setpoint °C"),
     "rd": ("S91", 10, True, "Differential °C"),
     "AL": ("S71", 10, True, "Low alarm °C"),
@@ -45,20 +44,14 @@ CAREL_PARAMS = {
 }
 
 
-# --- Carel Native Parsing Utilities ---
 def carel_hex(s):
     r = 0
     for c in s:
-        if '0' <= c <= '9':
-            v = ord(c) - 0x30
-        elif 'A' <= c <= 'F':
-            v = ord(c) - 0x37
-        elif 'a' <= c <= 'f':
-            v = ord(c) - 0x57
-        elif ':' <= c <= '?':
-            v = ord(c) - 0x30
-        else:
-            return 0
+        if '0' <= c <= '9': v = ord(c) - 0x30
+        elif 'A' <= c <= 'F': v = ord(c) - 0x37
+        elif 'a' <= c <= 'f': v = ord(c) - 0x57
+        elif ':' <= c <= '?': v = ord(c) - 0x30
+        else: return 0
         r = (r << 4) | (v & 0x0F)
     return r
 
@@ -73,7 +66,6 @@ def build_frame(body):
     return core + bcc(core)
 
 
-# --- Core Built-in Tool Definitions ---
 def run_hardware_test():
     """Tool 1: Verifies OS drivers, USB port availability, and adapter loopback."""
     print("\n=== TOOL 1: HARDWARE & SERIAL PORT LOOPBACK TEST ===")
@@ -145,7 +137,7 @@ def run_modbus_reader():
         scale_factor = 10.0
         def_baud, def_parity, def_stop = 19200, 'E', 1
     elif profile == "3":
-        registers = {"Probe 1 (Room)": 100, "Probe 2 (Evap 1)": 101, "Probe 3 (Evap 2)": 102}
+        registers = {"Probe 1 (Room)": 100, a"Probe 2 (Evap 1)": 101, "Probe 3 (Evap 2)": 102}
         scale_factor = 10.0
         def_baud, def_parity, def_stop = 9600, 'E', 1
     else:
@@ -163,8 +155,7 @@ def run_modbus_reader():
     stopbits = int(stop_input) if stop_input in ['1', '2'] else def_stop
 
     client = ModbusSerialClient(port=port, baudrate=baud, parity=parity, stopbits=stopbits, bytesize=8, timeout=1.5)
-    if not client.connect():
-        return
+    if not client.connect(): return
 
     try:
         while True:
@@ -176,8 +167,7 @@ def run_modbus_reader():
                         print(f"  {name} (Reg {reg_address}): [X] Read Failed / Timeout")
                     else:
                         raw_val = response.registers[0]
-                        if raw_val > 32767:
-                            raw_val -= 65536
+                        if raw_val > 32767: raw_val -= 65536
                         print(f"  {name} (Reg {reg_address}): {raw_val / scale_factor}°C")
                 except Exception as e:
                     print(f"  {name} (Reg {reg_address}): [X] Communication Error: {e}")
@@ -208,40 +198,43 @@ def run_carel_pjez_reader():
         start = time.time()
         while time.time() - start < timeout:
             b = ser.read(1)
-            if not b:
-                continue
-            if b == NULL:
-                return bytes([NULL])
+            if not b: continue
+            if b == NULL: return bytes([NULL])
             if b == STX:
                 buf = bytearray([STX])
                 while time.time() - start < timeout:
                     c = ser.read(1)
                     if c:
                         buf.append(c)
-                        if c == ETX:
-                            break
+                        if c == ETX: break
                 for _ in range(2):
                     c = ser.read(1)
-                    if c:
-                        buf.append(c)
+                    if c: buf.append(c)
                 return bytes(buf)
         return None
 
     print("\nPolling all Carel PJEZ broadcast parameters (Press Ctrl+C to halt)...\n")
     try:
         while True:
-            # Broadcast Enquiry Frame to target Unit ID
             ser.reset_input_buffer()
             ser.write(bytes([ENQ, 0x30 + unit_id]))
             frame = read_frame()
 
             if frame and len(frame) >= 6:
                 try:
-                    # Look for the End of Text delimiter byte position
                     etx_idx = frame.index(ETX)
                     body = frame[1:etx_idx].decode("ascii", errors="ignore")
-
-                    # Send back required Acknowledgement byte to controller
                     ser.write(bytes([ACK]))
+
+                    if len(body) >= 5 and body[1] in ["S", "U", "B"]:
+                        token = f"{body[1]}{body[2:4]}"
+                        raw = carel_hex(body[4:]) & 0xFFFF
+
+                        for mnem, (p_token, scale, signed, desc) in CAREL_PARAMS.items():
+                            if p_token == token:
+                                if signed and raw >= 0x8000: raw -= 0x10000
+                                final_val = raw / scale
+                                if scale > 1: print(f"  {mnem} ({desc}): {final_val:.1f}°C")
+
 
 
