@@ -1,6 +1,5 @@
 import sys
 import time
-import argparse
 
 # Verify global dependencies are accessible
 try:
@@ -176,7 +175,7 @@ def run_modbus_reader():
     input("\nPress ENTER to return to menu...")
 
 def run_carel_pjez_reader():
-    """Tool 4: Decodes Carey PJEZ ASCII proprietary protocol strings."""
+    """Tool 4: Decodes Carel PJEZ ASCII proprietary protocol strings."""
     print("\n=== TOOL 4: NATIVE CAREL PJEZ ASCII POLLER ===")
     port = input("Enter your serial port (e.g., /dev/ttyACM0 or COM3): ").strip()
     unit = input("Enter Carel Network Unit Address (default 1): ").strip() or "1"
@@ -195,8 +194,8 @@ def run_carel_pjez_reader():
         while time.time() - start < timeout:
             b = ser.read(1)
             if not b: continue
-            if b[0] == NULL: return bytes([NULL])
-            if b[0] == STX:
+            if b == NULL: return bytes([NULL])
+            if b == STX:
                 buf = bytearray([STX])
                 while time.time() - start < timeout:
                     c = ser.read(1)
@@ -217,15 +216,15 @@ def run_carel_pjez_reader():
             ser.write(bytes([ENQ, 0x30 + unit_id]))
             frame = read_frame()
             
-            if frame and len(frame) >= 6 and frame[0] == STX:
+            if frame and len(frame) >= 6:
                 try:
+                    # Look for the End of Text delimiter byte position
                     etx_idx = frame.index(ETX)
                     body = frame[1:etx_idx].decode("ascii", errors="ignore")
                     
-                    # Send back required Acknowledgement
+                    # Send back required Acknowledgement byte to controller
                     ser.write(bytes([ACK]))
                     
-                    if len(body) >= 5 and body[1] in "SUB":
-                        token = f"{body[1]}{body[2:4]}"
-                        raw = carel_hex(body[4:]) & 0xFFFF
-                        
+                    if len(body) >= 5 and body[0] in ["S", "U", "B"]:
+                        # Extract token characters and values
+
