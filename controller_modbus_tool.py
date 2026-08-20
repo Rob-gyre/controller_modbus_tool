@@ -180,12 +180,11 @@ def run_modbus_reader():
 
 
 def run_carel_pjez_reader():
-    """Tool 4: Passive Carel PJEZ ASCII Poller (Listens to automatic cyclic broadcasts)."""
+    """Tool 4: Decodes Carel PJEZ ASCII proprietary protocol strings."""
     print("\n=== TOOL 4: PASSIVE CAREL PJEZ ASCII LISTENER ===")
     port = input("Enter your serial port (e.g., /dev/ttyACM0 or COM3): ").strip()
 
     try:
-        # Open port at Carel standard 19200, No Parity, 2 Stop bits
         ser = serial.Serial(port=port, baudrate=19200, bytesize=8, parity='N', stopbits=2, timeout=0.5)
         print(f"[✓] Opened {port} successfully. Listening for automatic Carel broadcasts...")
         print("Press Ctrl+C at any time to halt listening and return to menu.\n")
@@ -221,34 +220,25 @@ def run_carel_pjez_reader():
                 try:
                     etx_idx = frame.index(ETX)
                     body = frame[1:etx_idx].decode("ascii", errors="ignore")
-                    ser.write(bytes([ACK]))
 
-                    # FIXED: Check only the FIRST character of the body string
+                    # FIXED: Added string array index parsing to match your driver script logic
                     if len(body) >= 5 and body[0] in ["S", "U", "B"]:
-                        # Extract the token format matching your original script layout
                         token = f"{body[0]}{body[2:4]}"
                         raw = carel_hex(body[4:]) & 0xFFFF
 
-                        # Match parsed tokens up to our human-friendly dictionary
                         for mnem, (p_token, scale, signed, desc) in CAREL_PARAMS.items():
                             if p_token == token:
-                                if signed and raw >= 0x8000: 
-                                    raw -= 0x10000
+                                if signed and raw >= 0x8000: raw -= 0x10000
                                 final_val = raw / scale
-                                if scale > 1: 
-                                    print(f"  {mnem} ({desc}): {final_val:.1f}°C")
-                                else: 
-                                    print(f"  {mnem} ({desc}): {int(final_val)}")
-                except (ValueError, IndexError): 
-                    pass
-                except Exception: 
-                    pass
+                                if scale > 1: print(f"  {mnem} ({desc}): {final_val:.1f}°C")
+                                else: print(f"  {mnem} ({desc}): {int(final_val)}")
+                except (ValueError, IndexError): pass
+                except Exception: pass
     except KeyboardInterrupt:
         print("\n[!] Passive Carel PJEZ listening halted by user.")
     finally:
         ser.close()
     input("\nPress ENTER to return to the main menu...")
-
 
 
 def main_menu():
@@ -279,6 +269,7 @@ def main_menu():
 if __name__ == "__main__":
     try: main_menu()
     except KeyboardInterrupt: sys.exit(0)
+
 
 
 
