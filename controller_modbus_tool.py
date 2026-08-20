@@ -221,7 +221,7 @@ def run_carel_pjez_reader():
                     etx_idx = frame.index(ETX)
                     body = frame[1:etx_idx].decode("ascii", errors="ignore")
 
-                    # FIXED: Added string array index parsing to match your driver script logic
+                    # FIXED: Added [0] index selection to inspect only the target leading character string
                     if len(body) >= 5 and body[0] in ["S", "U", "B"]:
                         token = f"{body[0]}{body[2:4]}"
                         raw = carel_hex(body[4:]) & 0xFFFF
@@ -269,6 +269,7 @@ def main_menu():
 if __name__ == "__main__":
     try: main_menu()
     except KeyboardInterrupt: sys.exit(0)
+
 
 
 
