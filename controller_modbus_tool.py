@@ -44,25 +44,34 @@ CAREL_PARAMS = {
     "dC": ("BO1", 1, False, "Compressor delay after defrost")
 }
 
+
 # --- Carel Native Parsing Utilities ---
 def carel_hex(s):
     r = 0
     for c in s:
-        if '0' <= c <= '9': v = ord(c) - 0x30
-        elif 'A' <= c <= 'F': v = ord(c) - 0x37
-        elif 'a' <= c <= 'f': v = ord(c) - 0x57
-        elif ':' <= c <= '?': v = ord(c) - 0x30
-        else: return 0
+        if '0' <= c <= '9':
+            v = ord(c) - 0x30
+        elif 'A' <= c <= 'F':
+            v = ord(c) - 0x37
+        elif 'a' <= c <= 'f':
+            v = ord(c) - 0x57
+        elif ':' <= c <= '?':
+            v = ord(c) - 0x30
+        else:
+            return 0
         r = (r << 4) | (v & 0x0F)
     return r
+
 
 def bcc(core):
     b = sum(core) & 0xFF
     return bytes([0x30 + ((b >> 4) & 0x0F), 0x30 + (b & 0x0F)])
 
+
 def build_frame(body):
     core = bytes([STX]) + body.encode("ascii") + bytes([ETX])
     return core + bcc(core)
+
 
 # --- Core Built-in Tool Definitions ---
 def run_hardware_test():
@@ -89,6 +98,7 @@ def run_hardware_test():
         print(f"[X] Hardware Error: Could not open port {port}.\nDetails: {e}")
     input("\nPress ENTER to return to the main menu...")
 
+
 def run_raw_sniffer():
     """Tool 2: Listens passively to incoming traffic, stripping away Modbus filtering."""
     print("\n=== TOOL 2: RAW BYTE SNIFFER ===")
@@ -109,8 +119,10 @@ def run_raw_sniffer():
     except Exception as e:
         print(f"[X] Sniffer Error: {e}")
     finally:
-        if 'ser' in locals() and ser.is_open: ser.close()
+        if 'ser' in locals() and ser.is_open:
+            ser.close()
     input("\nPress ENTER to return to the main menu...")
+
 
 def run_modbus_reader():
     """Tool 3: Structured Modbus RTU polling framework with configurable overrides."""
@@ -123,7 +135,7 @@ def run_modbus_reader():
     print("3) Eliwell (IDNext / Standard maps)")
     print("4) Custom Entry (Full Manual Setup)")
     profile = input("Choice (1-4): ").strip()
-    
+
     if profile == "1":
         registers = {"Probe 1 (Room)": 256, "Probe 2 (Evap 1)": 257, "Probe 3 (Evap 2)": 258}
         scale_factor = 10.0
@@ -151,8 +163,9 @@ def run_modbus_reader():
     stopbits = int(stop_input) if stop_input in ['1', '2'] else def_stop
 
     client = ModbusSerialClient(port=port, baudrate=baud, parity=parity, stopbits=stopbits, bytesize=8, timeout=1.5)
-    if not client.connect(): return
-    
+    if not client.connect():
+        return
+
     try:
         while True:
             print(f"--- Poll Cycle: {time.strftime('%Y-%m-%d %H:%M:%S')} ---")
@@ -163,7 +176,8 @@ def run_modbus_reader():
                         print(f"  {name} (Reg {reg_address}): [X] Read Failed / Timeout")
                     else:
                         raw_val = response.registers[0]
-                        if raw_val > 32767: raw_val -= 65536
+                        if raw_val > 32767:
+                            raw_val -= 65536
                         print(f"  {name} (Reg {reg_address}): {raw_val / scale_factor}°C")
                 except Exception as e:
                     print(f"  {name} (Reg {reg_address}): [X] Communication Error: {e}")
@@ -174,13 +188,14 @@ def run_modbus_reader():
         client.close()
     input("\nPress ENTER to return to menu...")
 
+
 def run_carel_pjez_reader():
     """Tool 4: Decodes Carel PJEZ ASCII proprietary protocol strings."""
     print("\n=== TOOL 4: NATIVE CAREL PJEZ ASCII POLLER ===")
     port = input("Enter your serial port (e.g., /dev/ttyACM0 or COM3): ").strip()
     unit = input("Enter Carel Network Unit Address (default 1): ").strip() or "1"
     unit_id = int(unit)
-    
+
     try:
         ser = serial.Serial(port=port, baudrate=19200, bytesize=8, parity='N', stopbits=2, timeout=0.5)
         print(f"[✓] Opened {port} at 19200 N 2. Querying Carel Unit ID {unit_id}...")
@@ -193,18 +208,22 @@ def run_carel_pjez_reader():
         start = time.time()
         while time.time() - start < timeout:
             b = ser.read(1)
-            if not b: continue
-            if b == NULL: return bytes([NULL])
+            if not b:
+                continue
+            if b == NULL:
+                return bytes([NULL])
             if b == STX:
                 buf = bytearray([STX])
                 while time.time() - start < timeout:
                     c = ser.read(1)
                     if c:
-                        buf.append(c[0])
-                        if c[0] == ETX: break
+                        buf.append(c)
+                        if c == ETX:
+                            break
                 for _ in range(2):
                     c = ser.read(1)
-                    if c: buf.append(c[0])
+                    if c:
+                        buf.append(c)
                 return bytes(buf)
         return None
 
@@ -215,36 +234,14 @@ def run_carel_pjez_reader():
             ser.reset_input_buffer()
             ser.write(bytes([ENQ, 0x30 + unit_id]))
             frame = read_frame()
-            
+
             if frame and len(frame) >= 6:
                 try:
                     # Look for the End of Text delimiter byte position
                     etx_idx = frame.index(ETX)
                     body = frame[1:etx_idx].decode("ascii", errors="ignore")
-                    
+
                     # Send back required Acknowledgement byte to controller
                     ser.write(bytes([ACK]))
-                    
-                    if len(body) >= 5 and body[0] in ["S", "U", "B"]:
-                        # Extract token characters and values
-                         token = f"{body[0]}{body[2:4]}"
-                        raw = carel_hex(body[4:]) & 0xFFFF
-                        
-                        # Match parsed tokens up to human-friendly Mnemonics mapping dictionary
-                        for mnem, (p_token, scale, signed, desc) in CAREL_PARAMS.items():
-                            if p_token == token:
-                                if signed and raw >= 0x8000: 
-                                    raw -= 0x10000
-                                final_val = raw / scale
-                                if scale > 1:
-                                    print(f"  {mnem} ({desc}): {final_val:.1f}°C")
-                                else:
-                                    print(f"  {mnem} ({desc}): {int(final_val)}")
-                except (ValueError, IndexError):
-                    # Gracefully skip frame strings that are missing an ETX delimiter
-                    pass
-                except Exception:
-                    pass
-            print("-" * 45)
-            time.sleep(2.0)
+
 
