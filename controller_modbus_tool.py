@@ -115,7 +115,6 @@ def run_raw_sniffer():
             ser.close()
     input("\nPress ENTER to return to the main menu...")
 
-
 def run_modbus_reader():
     """Tool 3: Structured Modbus RTU polling framework with configurable overrides."""
     print("\n=== TOOL 3: STRUCTURED MODBUS RTU POLLER ===")
@@ -155,7 +154,8 @@ def run_modbus_reader():
     stopbits = int(stop_input) if stop_input in ['1', '2'] else def_stop
 
     client = ModbusSerialClient(port=port, baudrate=baud, parity=parity, stopbits=stopbits, bytesize=8, timeout=1.5)
-    if not client.connect(): return
+    if not client.connect():
+        return
 
     try:
         while True:
@@ -166,7 +166,7 @@ def run_modbus_reader():
                     if response is None or response.isError():
                         print(f"  {name} (Reg {reg_address}): [X] Read Failed / Timeout")
                     else:
-                        raw_val = response.registers[0]
+                        raw_val = response.registers
                         if raw_val > 32767: raw_val -= 65536
                         print(f"  {name} (Reg {reg_address}): {raw_val / scale_factor}°C")
                 except Exception as e:
@@ -226,8 +226,8 @@ def run_carel_pjez_reader():
                     body = frame[1:etx_idx].decode("ascii", errors="ignore")
                     ser.write(bytes([ACK]))
 
-                    if len(body) >= 5 and body[1] in ["S", "U", "B"]:
-                        token = f"{body[1]}{body[2:4]}"
+                    if len(body) >= 5 and body in ["S", "U", "B"]:
+                        token = f"{body}{body[2:4]}"
                         raw = carel_hex(body[4:]) & 0xFFFF
 
                         for mnem, (p_token, scale, signed, desc) in CAREL_PARAMS.items():
@@ -235,6 +235,46 @@ def run_carel_pjez_reader():
                                 if signed and raw >= 0x8000: raw -= 0x10000
                                 final_val = raw / scale
                                 if scale > 1: print(f"  {mnem} ({desc}): {final_val:.1f}°C")
+                                else: print(f"  {mnem} ({desc}): {int(final_val)}")
+                except (ValueError, IndexError): pass
+                except Exception: pass
+            print("-" * 45)
+            time.sleep(2.0)
+    except KeyboardInterrupt:
+        print("\n[!] Carel PJEZ engine halted by user.")
+    finally:
+        ser.close()
+    input("\nPress ENTER to return to the main menu...")
+
+
+def main_menu():
+    """Core terminal menu dispatcher loop."""
+    while True:
+        print("\n" + "="*45)
+        print("       HVAC FIELD SERIAL DIAGNOSTIC TOOL     ")
+        print("="*45)
+        print("1) Run Hardware Loopback Test  (Old: serial_USB_test.py)")
+        print("2) Run Raw Byte Sniffer        (Old: ttl_raw_capture.py)")
+        print("3) Run Structured Modbus Poll  (Old: read_dixell.py)")
+        print("4) Run Native Carel PJEZ Poll  (ASCII Token Engine)")
+        print("5) Exit Program")
+        print("="*45)
+
+        choice = input("Select an option (1-5): ").strip()
+        if choice == "1": run_hardware_test()
+        elif choice == "2": run_raw_sniffer()
+        elif choice == "3": run_modbus_reader()
+        elif choice == "4": run_carel_pjez_reader()
+        elif choice == "5":
+            print("\nExiting. Tool closed safely.")
+            sys.exit(0)
+        else:
+            print("\n[!] Invalid Selection. Please type 1 to 5.")
+
+
+if __name__ == "__main__":
+    try: main_menu()
+    except KeyboardInterrupt: sys.exit(0)
 
 
 
