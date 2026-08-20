@@ -21,28 +21,6 @@ except ImportError:
 # Protocol Constants for Carel ASCII Engine
 STX, ETX, ENQ, ACK, NULL = 0x02, 0x03, 0x05, 0x06, 0x00
 
-# Carel PJEZ Parameters Maps
-CAREL_PARAMS = {
-    "St": ("S81", 10, True, "Setpoint °C"),
-    "rd": ("S91", 10, True, "Differential °C"),
-    "AL": ("S71", 10, True, "Low alarm °C"),
-    "AH": ("S@1", 10, True, "High alarm °C"),
-    "dt": ("S-1", 10, True, "Defrost end temp °C"),
-    "c1": ("U<1", 1, False, "Min between starts (min)"),
-    "c2": ("U=1", 1, False, "Min OFF time (min)"),
-    "c3": ("U>1", 1, False, "Min ON time (min)"),
-    "d0": ("UB1", 1, False, "Defrost type"),
-    "d1": ("UC1", 1, False, "Defrost interval (hours)"),
-    "dP": ("UD1", 1, False, "Max defrost time (min)"),
-    "d5": ("UE1", 1, False, "Defrost delay (min)"),
-    "dd": ("UF1", 1, False, "Drain time (min)"),
-    "d8": ("UG1", 1, False, "Defrost priority"),
-    "d4": ("BL1", 1, False, "Defrost at power-on"),
-    "d6": ("BM1", 1, False, "Defrost enabled"),
-    "d9": ("BN1", 1, False, "Defrost during standby"),
-    "dC": ("BO1", 1, False, "Compressor delay after defrost")
-}
-
 
 def carel_hex(s):
     r = 0
@@ -221,25 +199,19 @@ def run_carel_pjez_reader():
                     body = frame[1:etx_idx].decode("ascii", errors="ignore")
                     ser.write(bytes([ACK]))
 
-                    # RESTORED: Evaluates only the single leading character block
+                    # Evaluates only the single leading character slice
                     if body[0] in ["S", "U", "B"]:
                         token = f"{body[0]}{body[2:4]}"
                         raw = carel_hex(body[4:]) & 0xFFFF
-
-                        # Simplified key lookup mapping match
-                        for mnem, config in CAREL_PARAMS.items():
-                            if config[0] == token:
-                                scale = config[1]
-                                signed = config[2]
-                                desc = config[3]
-                                
-                                if signed and raw >= 0x8000: 
-                                    raw -= 0x10000
-                                final_val = raw / scale
-                                if scale > 1: 
-                                    print(f"  {mnem} ({desc}): {final_val:.1f}°C")
-                                else: 
-                                    print(f"  {mnem} ({desc}): {int(final_val)}")
+                        
+                        if body[0] == "S" and raw >= 0x8000:
+                            raw -= 0x10000
+                            
+                        # Standard raw output matching your original script print statement
+                        if token in ["S81", "S91", "S71", "S@1", "S-1"]:
+                            print(f"Token: {token} | Value: {raw / 10.0}°C")
+                        else:
+                            print(f"Token: {token} | Value: {raw}")
                 except Exception: 
                     pass
     except KeyboardInterrupt:
@@ -263,10 +235,14 @@ def main_menu():
         print("="*45)
 
         choice = input("Select an option (1-5): ").strip()
-        if choice == "1": run_hardware_test()
-        elif choice == "2": run_raw_sniffer()
-        elif choice == "3": run_modbus_reader()
-        elif choice == "4": run_carel_pjez_reader()
+        if choice == "1": 
+            run_hardware_test()
+        elif choice == "2": 
+            run_raw_sniffer()
+        elif choice == "3": 
+            run_modbus_reader()
+        elif choice == "4": 
+            run_carel_pjez_reader()
         elif choice == "5":
             print("\nExiting. Tool closed safely.")
             sys.exit(0)
@@ -275,8 +251,12 @@ def main_menu():
 
 
 if __name__ == "__main__":
-    try: main_menu()
-    except KeyboardInterrupt: sys.exit(0)
+    try: 
+        main_menu()
+    except KeyboardInterrupt: 
+        sys.exit(0)
+
+
 
 
 
