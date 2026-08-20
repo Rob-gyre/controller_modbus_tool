@@ -180,21 +180,21 @@ def run_modbus_reader():
 
 
 def run_carel_pjez_reader():
-    """Tool 4: Decodes Carel PJEZ ASCII proprietary protocol strings using original driver logic."""
-    print("\n=== TOOL 4: NATIVE CAREL PJEZ ASCII POLLER ===")
+    """Tool 4: Passive Carel PJEZ ASCII Poller (Listens to automatic cyclic broadcasts)."""
+    print("\n=== TOOL 4: PASSIVE CAREL PJEZ ASCII LISTENER ===")
     port = input("Enter your serial port (e.g., /dev/ttyACM0 or COM3): ").strip()
-    unit = input("Enter Carel Network Unit Address (default 1): ").strip() or "1"
-    unit_id = int(unit)
 
     try:
+        # Open port at Carel standard 19200, No Parity, 2 Stop bits
         ser = serial.Serial(port=port, baudrate=19200, bytesize=8, parity='N', stopbits=2, timeout=0.5)
-        print(f"[✓] Opened {port} at 19200 N 2. Querying Carel Unit ID {unit_id}...")
+        print(f"[✓] Opened {port} successfully. Listening for automatic Carel broadcasts...")
+        print("Press Ctrl+C at any time to halt listening and return to menu.\n")
     except Exception as e:
         print(f"[X] Connection Error: {e}")
         input("\nPress ENTER to return to menu...")
         return
 
-    def read_frame(timeout=0.8):
+    def read_frame(timeout=1.5):
         start = time.time()
         while time.time() - start < timeout:
             b = ser.read(1)
@@ -213,26 +213,22 @@ def run_carel_pjez_reader():
                 return bytes(buf)
         return None
 
-    print("\nPolling all Carel PJEZ broadcast parameters (Press Ctrl+C to halt)...\n")
     try:
         while True:
-            ser.reset_input_buffer()
-            ser.write(bytes([ENQ, 0x30 + unit_id]))
+            # DO NOT write or clear the buffer. Just sit back and listen for the broadcast frame.
             frame = read_frame()
 
             if frame and len(frame) >= 6:
                 try:
                     etx_idx = frame.index(ETX)
                     body = frame[1:etx_idx].decode("ascii", errors="ignore")
-                    ser.write(bytes([ACK]))
 
-                    # FIXED: RESTORED ORIGINAL PARSING MECHANISM
+                    # Check if the frame body starts with Carel token characters
                     if len(body) >= 5 and body[0] in ["S", "U", "B"]:
-                        # Extract token characters and values cleanly matching original carel_final script
                         token = f"{body[0]}{body[2:4]}"
                         raw = carel_hex(body[4:]) & 0xFFFF
 
-                        # Match parsed tokens up to human-friendly Mnemonics mapping dictionary
+                        # Match parsed tokens up to our human-friendly dictionary
                         for mnem, (p_token, scale, signed, desc) in CAREL_PARAMS.items():
                             if p_token == token:
                                 if signed and raw >= 0x8000: 
@@ -246,10 +242,8 @@ def run_carel_pjez_reader():
                     pass
                 except Exception: 
                     pass
-            print("-" * 45)
-            time.sleep(2.0)
     except KeyboardInterrupt:
-        print("\n[!] Carel PJEZ engine halted by user.")
+        print("\n[!] Passive Carel PJEZ listening halted by user.")
     finally:
         ser.close()
     input("\nPress ENTER to return to the main menu...")
