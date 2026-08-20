@@ -227,4 +227,24 @@ def run_carel_pjez_reader():
                     
                     if len(body) >= 5 and body[0] in ["S", "U", "B"]:
                         # Extract token characters and values
+                         token = f"{body[0]}{body[2:4]}"
+                        raw = carel_hex(body[4:]) & 0xFFFF
+                        
+                        # Match parsed tokens up to human-friendly Mnemonics mapping dictionary
+                        for mnem, (p_token, scale, signed, desc) in CAREL_PARAMS.items():
+                            if p_token == token:
+                                if signed and raw >= 0x8000: 
+                                    raw -= 0x10000
+                                final_val = raw / scale
+                                if scale > 1:
+                                    print(f"  {mnem} ({desc}): {final_val:.1f}°C")
+                                else:
+                                    print(f"  {mnem} ({desc}): {int(final_val)}")
+                except (ValueError, IndexError):
+                    # Gracefully skip frame strings that are missing an ETX delimiter
+                    pass
+                except Exception:
+                    pass
+            print("-" * 45)
+            time.sleep(2.0)
 
