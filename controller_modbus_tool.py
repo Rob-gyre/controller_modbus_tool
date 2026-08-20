@@ -137,7 +137,7 @@ def run_modbus_reader():
         scale_factor = 10.0
         def_baud, def_parity, def_stop = 19200, 'E', 1
     elif profile == "3":
-        registers = {"Probe 1 (Room)": 100, a"Probe 2 (Evap 1)": 101, "Probe 3 (Evap 2)": 102}
+        registers = {"Probe 1 (Room)": 100, "Probe 2 (Evap 1)": 101, "Probe 3 (Evap 2)": 102}
         scale_factor = 10.0
         def_baud, def_parity, def_stop = 9600, 'E', 1
     else:
