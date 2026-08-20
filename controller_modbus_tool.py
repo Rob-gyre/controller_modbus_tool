@@ -155,18 +155,24 @@ def run_modbus_reader():
         while True:
             print(f"--- Poll Cycle: {time.strftime('%Y-%m-%d %H:%M:%S')} ---")
             for name, reg_address in registers.items():
-                response = client.read_holding_registers(address=reg_address, count=1, slave=int(slave_id))
-                
-                if response.isError():
-                    print(f"  {name} (Reg {reg_address}): [X] Read Failed / Timeout")
-                else:
-                    raw_val = response.registers[0]
-                    # Process two's complement for signed negative temperature integers
-                    if raw_val > 32767:
-                        raw_val -= 65536
+                try:
+                    # Wrapped in try/except to catch older pymodbus fatal IO exceptions
+                    response = client.read_holding_registers(address=reg_address, count=1, slave=int(slave_id))
                     
-                    final_val = raw_val / scale_factor
-                    print(f"  {name} (Reg {reg_address}): {final_val}°C (Raw: {response.registers[0]})")
+                    if response is None or response.isError():
+                        print(f"  {name} (Reg {reg_address}): [X] Read Failed / Timeout")
+                    else:
+                        raw_val = response.registers[0]
+                        # Process two's complement for signed negative temperature integers
+                        if raw_val > 32767:
+                            raw_val -= 65536
+                        
+                        final_val = raw_val / scale_factor
+                        print(f"  {name} (Reg {reg_address}): {final_val}°C (Raw: {response.registers[0]})")
+                        
+                except Exception as e:
+                    # Catches the raw ModbusIOException cleanly so the loop doesn't break
+                    print(f"  {name} (Reg {reg_address}): [X] Communication Error: {e}")
                     
             print("-" * 40)
             time.sleep(2.0)
