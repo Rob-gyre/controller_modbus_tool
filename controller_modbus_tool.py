@@ -345,7 +345,7 @@ def run_universal_dashboard_node(cfg):
 
 
 def run_custom_xr77u_workspace(cfg):
-    """Tool 5: Specialized Dixell XR77U Custom OEM Profile (2C310000 / Map Code Ptb 3)"""
+    """Tool 5: Specialized Dixell XR77U Custom OEM Profile Workspace Suite"""
     print("\n========================================================")
     print("=== TOOL 5: SPECIALISED DIXELL XR77U PROFILE WORKSPACE ===")
     print("========================================================")
@@ -356,103 +356,106 @@ def run_custom_xr77u_workspace(cfg):
     instrument = build_instrument_context(cfg, target_slave=1)
     if not instrument: return
 
-    # Mapped registers derived from your workbench validation sweeps
-    REG_ROOM_TEMP = 256   # 0x0100 - Live Room Probe (P1)
-    REG_SETPOINT  = 853   # 0x0355 - Mapped Temperature Setpoint (SEt)
-    REG_DIFF      = 770   # 0x0302 - Mapped Regulation Differential (Hy)
-    REG_STATUS    = 12    # 0x000C - Live Relay Output Bitmask Register (FC 0x03/0x04)
-
     while True:
         print(f"\n--- Mapped Telemetry Actions (Address: 1 | Speed: {cfg.baudrate} bps) ---")
-        print(" 1) Stream Live Telemetry Dashboard (P1 Room Temp, SEt, Hy)")
-        print(" 2) Modify Temperature Setpoint (Write New SEt Value to Reg 819)")
-        print(" 3) Run Automated Interactive Parameter Capture Wizard")
+        print(" 1) Stream Complete Single-Snapshot Telemetry Dashboard Blueprint")
+        print(" 2) Modify Temperature Setpoint (Write New SEt Value to Reg 853)")
+        print(" 3) Launch Automated Interactive Parameter Capture Wizard (Diff-Hunter)")
         print(" B) Back to Main Menu")
         
         choice = input("\nSelect operational profile choice: ").strip().upper()
         if choice == "B":
             break
+            
         elif choice == "1":
             print(f"\n[{time.strftime('%H:%M:%S')}] Querying full controller memory map...")
             try:
-                # --- 1. SENSOR TELEMETRY INFRASTRUCTURE ---
+                # --- 1. SENSOR TELEMETRY INTERFACE ---
                 p1_room = instrument.read_register(256, number_of_decimals=1, signed=True)
                 p2_evap = instrument.read_register(257, number_of_decimals=1, signed=True)
+                cf_unit = "°C" # Hardlocked to your verified physical bench scale
 
-                # --- 2. CONFIGURATION STRINGS ENGINE ---
-                cf_raw  = instrument.read_register(768)
-                cf_unit = "°C" if cf_raw == 0 else "°F"
-                
-                # --- 3. THE 5 CORE BENCH-VERIFIED PARAMETERS ---
+                # --- 2. REGULATION CONFIGURATIONS (770-777 BLOCK) ---
                 setpoint = instrument.read_register(853, number_of_decimals=1, signed=True)
                 diff     = instrument.read_register(770, number_of_decimals=1, signed=False)
                 ls_limit = instrument.read_register(771, number_of_decimals=1, signed=True)
                 us_limit = instrument.read_register(772, number_of_decimals=1, signed=True)
-                all_lim  = instrument.read_register(778, number_of_decimals=1, signed=True) # Confirmed ALL
-                dao_raw  = instrument.read_register(781, signed=False)                     # Confirmed dAO
-
-                # --- 4. SYSTEM CALIBRATION SETTINGS ---
                 ot_cal   = instrument.read_register(773, number_of_decimals=1, signed=True)
                 ac_delay = instrument.read_register(774)
-                idf_int  = instrument.read_register(780)
+                cct_dur  = instrument.read_register(775, number_of_decimals=1, signed=True)
+                ccs_set  = instrument.read_register(776, number_of_decimals=1, signed=True)
+                con_time = instrument.read_register(777, number_of_decimals=1, signed=True)
+                cof_time = instrument.read_register(778, number_of_decimals=1, signed=True)
 
-                # --- 5. PRINT UNIFIED DASHBOARD TO CONSOLE ---
+                # --- 3. DEFROST & CYCLICAL CONFIGURATIONS (780+ BLOCK) ---
+                idf_int  = instrument.read_register(780)
+                dao_raw  = instrument.read_register(781, signed=False)
+
+                # --- 4. ADVANCED ALARMS & PROTECTION MAPPINGS (832-838 BLOCK) ---
+                alm_diff = instrument.read_register(832, number_of_decimals=1, signed=False)
+                ald_dly  = instrument.read_register(834)
+                all_lim  = instrument.read_register(835, number_of_decimals=1, signed=True)
+                alu_lim  = instrument.read_register(836, number_of_decimals=1, signed=True)
+
+                # --- 5. PRINT CLEAN UNIFIED BLUEPRINT DASHBOARD ---
                 print("\n" + "=" * 60)
                 print(f"[{time.strftime('%H:%M:%S')}] --- UNIFIED SYSTEM TELEMETRY FRAME ---")
                 print("=" * 60)
                 print(f"  [LIVE PROBES]")
                 print(f"    -> Room Temperature (P1):      {p1_room} {cf_unit}")
                 print(f"    -> Evaporator Temp (P2):       {p2_evap} {cf_unit}")
-                print(f"  [REGULATION SETTINGS]")
+                print(f"  [REGULATION PARAMETERS]")
                 print(f"    -> Current Setpoint (SEt):     {setpoint} {cf_unit}")
                 print(f"    -> Differential (Hy):          {diff} {cf_unit}")
                 print(f"    -> Minimum Setpoint (LS):      {ls_limit} {cf_unit}")
                 print(f"    -> Maximum Setpoint (US):      {us_limit} {cf_unit}")
                 print(f"    -> Probe 1 Calibration (Ot):   {ot_cal} {cf_unit}")
                 print(f"    -> Anti-Short Cycle Delay (AC):{ac_delay} Mins")
+                print(f"    -> Continuous Cycle Time (CCt):{cct_dur} Hours")
+                print(f"    -> Continuous Cycle Set (CCS): {ccs_set} {cf_unit}")
+                print(f"    -> Probe Fault Comp ON (Con):  {con_time} Mins")
+                print(f"    -> Probe Fault Comp OFF (CoF): {cof_time} Mins")
                 print(f"  [DEFROST CONFIGURATION]")
                 print(f"    -> Interval Between Cycles (IdF):{idf_int} Hours")
-                print(f"  [ALARM THRESHOLDS]")
+                print(f"  [ALARM THRESHOLDS & SETTINGS]")
+                print(f"    -> Alarm Differential (AFH):   {alm_diff} {cf_unit}")
+                print(f"    -> Alarm Time Delay (ALd):     {ald_dly} Mins")
                 print(f"    -> Low Temp Alarm (ALL):       {all_lim} {cf_unit}")
+                print(f"    -> High Temp Alarm (ALU):      {alu_lim} {cf_unit}")
                 print(f"    -> Startup Alarm Exclusion (dAO):{dao_raw * 10} Mins")
                 print("=" * 60)
             except Exception as e:
                 print(f"[X] Telemetry Query Interrupted/Failed: {e}")
-    
-
-
-
-
-
+            input("\nPress ENTER to continue inside workspace...")
 
         elif choice == "2":
             try:
-                current_set = instrument.read_register(REG_SETPOINT, number_of_decimals=1, signed=True)
+                current_set = instrument.read_register(853, number_of_decimals=1, signed=True)
                 print(f"\nCurrent active controller memory Setpoint reads: {current_set} °C")
                 val_input = input("Enter new targeted Setpoint value in °C (e.g. 4.0): ").strip()
                 if not val_input: continue
                 new_val = float(val_input)
                 
-                print("Broadcasting Modbus Write command to Setpoint Register 819...")
-                instrument.write_register(REG_SETPOINT, new_val, number_of_decimals=1, signed=True)
+                print("Broadcasting Modbus Write command to Setpoint Register 853...")
+                instrument.write_register(853, new_val, number_of_decimals=1, signed=True)
                 time.sleep(0.3)
                 
-                if instrument.read_register(REG_SETPOINT, number_of_decimals=1, signed=True) == new_val:
+                if instrument.read_register(853, number_of_decimals=1, signed=True) == new_val:
                     print(f"[✓] SUCCESS: Mapped value successfully committed to EEPROM: {new_val} °C")
                 else:
                     print("[X] ERROR: Verification check failed. Mismatch on memory readback.")
             except Exception as e:
                 print(f"[X] Modbus Write Transaction Aborted: {e}")
-        input("\nPress ENTER to continue inside current profile environment...")
-        
-        
+            input("\nPress ENTER to continue inside current profile environment...")
+
         elif choice == "3":
             print("\n=== AUTOMATED PARAMETER CAPTURE WIZARD (DIFF-HUNTER) ===")
-            print("Step 1: Reading baseline snapshot of memory range 768-845...")
+            print("Step 1: Reading baseline snapshot of memory range 768-860...")
             
             baseline = {}
             try:
-                for addr in range(768, 846):
+                # Expanded range safely up to 860 to ensure we catch trailing variables
+                for addr in range(768, 861):
                     baseline[addr] = instrument.read_register(addr, number_of_decimals=0, signed=False)
                 print("[✓] Baseline state stored successfully.")
                 
@@ -466,7 +469,7 @@ def run_custom_xr77u_workspace(cfg):
                 print("\nStep 2: Scanning for delta modifications across the memory matrix...")
                 changes_found = 0
                 
-                for addr in range(768, 846):
+                for addr in range(768, 861):
                     current_val = instrument.read_register(addr, number_of_decimals=0, signed=False)
                     if current_val != baseline[addr]:
                         hex_str = f"0x{addr:04X}"
@@ -484,6 +487,7 @@ def run_custom_xr77u_workspace(cfg):
             except Exception as e:
                 print(f"[X] Wizard automation tracking sequence dropped: {e}")
             input("\nPress ENTER to return to your workspace options menu...")
+
 
 
 # --- MAIN ENGINE ROUTER LOOPS ---
