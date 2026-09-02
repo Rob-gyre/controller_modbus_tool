@@ -366,6 +366,7 @@ def run_custom_xr77u_workspace(cfg):
         print(f"\n--- Mapped Telemetry Actions (Address: 1 | Speed: {cfg.baudrate} bps) ---")
         print(" 1) Stream Live Telemetry Dashboard (P1 Room Temp, SEt, Hy)")
         print(" 2) Modify Temperature Setpoint (Write New SEt Value to Reg 819)")
+        print(" 3) Run Automated Interactive Parameter Capture Wizard")
         print(" B) Back to Main Menu")
         
         choice = input("\nSelect operational profile choice: ").strip().upper()
@@ -443,6 +444,47 @@ def run_custom_xr77u_workspace(cfg):
             except Exception as e:
                 print(f"[X] Modbus Write Transaction Aborted: {e}")
         input("\nPress ENTER to continue inside current profile environment...")
+        
+        
+                elif choice == "3":
+            print("\n=== AUTOMATED PARAMETER CAPTURE WIZARD (DIFF-HUNTER) ===")
+            print("Step 1: Reading baseline snapshot of memory range 768-845...")
+            
+            baseline = {}
+            try:
+                for addr in range(768, 846):
+                    baseline[addr] = instrument.read_register(addr, number_of_decimals=0, signed=False)
+                print("[✓] Baseline state stored successfully.")
+                
+                print("\n--- ACTION REQUIRED ON TEST BENCH ---")
+                param_name = input("Enter the label of the parameter you are about to change (e.g., MdF, dtE): ").strip().upper()
+                print(f"\n[!] Go to the controller keypad now.")
+                print(f"    1. Modify parameter [{param_name}] to your new target value.")
+                print(f"    2. Exit the Pr1/Pr2 menu completely until the home screen display returns.")
+                input("\n>>> Once the controller is back on its home display screen, press ENTER to hunt for changes...")
+                
+                print("\nStep 2: Scanning for delta modifications across the memory matrix...")
+                changes_found = 0
+                
+                for addr in range(768, 846):
+                    current_val = instrument.read_register(addr, number_of_decimals=0, signed=False)
+                    if current_val != baseline[addr]:
+                        hex_str = f"0x{addr:04X}"
+                        print(f"\n[💥 MATCH FOUND] Parameter [{param_name}] mapped directly to memory!")
+                        print(f"  -> Decimal Register: {addr} ({hex_str})")
+                        print(f"  -> Previous Stored Value: {baseline[addr]}")
+                        print(f"  -> New Keypad Input Value: {current_val}")
+                        changes_found += 1
+                
+                if changes_found == 0:
+                    print("\n[X] SCAN COMPLETE: No changes detected. Suggestions:")
+                    print("    -> Make sure you exited the installer menu completely so it isn't reporting 'Busy'.")
+                    print("    -> Confirm the parameter actually saved its value on the physical board panel.")
+                    
+            except Exception as e:
+                print(f"[X] Wizard automation tracking sequence dropped: {e}")
+            input("\nPress ENTER to return to your workspace options menu...")
+
 
 # --- MAIN ENGINE ROUTER LOOPS ---
 
