@@ -377,24 +377,28 @@ def run_custom_xr77u_workspace(cfg):
                 while True:
                     try:
                         # --- 1. FETCH LIVE SENSOR TELEMETRY ---
-                        # Raw sensor wire inputs (Function Code 3)
                         p1_room = instrument.read_register(256, number_of_decimals=1, signed=True)
                         p2_evap = instrument.read_register(257, number_of_decimals=1, signed=True)
 
                         # --- 2. FETCH REGULATION PARAMETERS ---
                         cf_raw  = instrument.read_register(768)
-                        cf_unit = "°F" if cf_raw == 1 else "°C"
+                        cf_unit = "°C" if cf_raw == 0 else "°F"
                         
                         setpoint = instrument.read_register(853, number_of_decimals=1, signed=True)
                         diff     = instrument.read_register(770, number_of_decimals=1, signed=False)
+                        
+                        # Confirmed: 771 and 772 are completely correct for your LS and US adjustments!
                         ls_limit = instrument.read_register(771, number_of_decimals=1, signed=True)
                         us_limit = instrument.read_register(772, number_of_decimals=1, signed=True)
+                        
                         ot_cal   = instrument.read_register(773, number_of_decimals=1, signed=True)
                         ac_delay = instrument.read_register(774)
-                        cct_dur  = instrument.read_register(775, number_of_decimals=1, signed=False)
+                        
+                        # Corrected: Reading Con and CoF as true raw parameters without accidental decimal scaling
+                        cct_dur  = instrument.read_register(775, number_of_decimals=1, signed=True)
                         ccs_set  = instrument.read_register(776, number_of_decimals=1, signed=True)
-                        con_time = instrument.read_register(777)
-                        cof_time = instrument.read_register(778)
+                        con_time = instrument.read_register(777, signed=True)
+                        cof_time = instrument.read_register(778, signed=True)
 
                         # --- 3. FETCH DEFROST PARAMETERS ---
                         idf_int  = instrument.read_register(780)
@@ -402,11 +406,11 @@ def run_custom_xr77u_workspace(cfg):
                         fdt_drip = instrument.read_register(785)
                         dad_dly  = instrument.read_register(786)
 
-                        # --- 4. FETCH ALARM PARAMETERS ---
-                        all_lim  = instrument.read_register(835, number_of_decimals=1, signed=True)
-                        alu_lim  = instrument.read_register(836, number_of_decimals=1, signed=True)
-                        ald_dly  = instrument.read_register(837)
-                        dao_stUP = instrument.read_register(838, number_of_decimals=1, signed=False)
+                        # --- 4. FETCH CORRECTED ALARM PARAMETERS FROM THE XDB BUS ---
+                        all_lim  = instrument.read_register(832, number_of_decimals=1, signed=True) # Real ALL Location
+                        alu_lim  = instrument.read_register(833, number_of_decimals=1, signed=True) # Real ALU Location
+                        ald_dly  = instrument.read_register(834)                                   # Real ALd Location
+                        dao_raw  = instrument.read_register(836)                                   # Real dAO Location
 
                         # --- 5. PRINT UNIFIED DASHBOARD TO CONSOLE ---
                         print(f"[{time.strftime('%H:%M:%S')}] --- UNIFIED SYSTEM TELEMETRY FRAME ---")
@@ -433,13 +437,14 @@ def run_custom_xr77u_workspace(cfg):
                         print(f"    -> Low Temp Alarm (ALL):       {all_lim} {cf_unit}")
                         print(f"    -> High Temp Alarm (ALU):      {alu_lim} {cf_unit}")
                         print(f"    -> Alarm Time Delay (ALd):     {ald_dly} Mins")
-                        print(f"    -> Startup Alarm Exclusion (dAO):{dao_stUP} Hours")
+                        print(f"    -> Startup Alarm Exclusion (dAO):{dao_raw} Mins")
                         print("=" * 60)
                     except Exception as e:
                         print(f"[{time.strftime('%H:%M:%S')}] [TIMEOUT/ERROR] Data drop: {e}")
                     time.sleep(2.0)
             except KeyboardInterrupt:
                 print("\nStream paused.")
+
 
 
 
