@@ -373,7 +373,8 @@ def run_custom_xr77u_workspace(cfg):
                 # --- 1. SENSOR TELEMETRY INTERFACE ---
                 p1_room = instrument.read_register(256, number_of_decimals=1, signed=True)
                 p2_evap = instrument.read_register(257, number_of_decimals=1, signed=True)
-                cf_unit = "°C" # Hardlocked to your verified physical bench scale
+                cf_raw  = instrument.read_register(813)
+                cf_unit = "°C" if cf_raw == 0 else "°F"
 
                 # --- 2. REGULATION CONFIGURATIONS (770-777 BLOCK) ---
                 setpoint = instrument.read_register(853, number_of_decimals=1, signed=True)
