@@ -381,7 +381,7 @@ def run_custom_xr77u_workspace(cfg):
                         diff      = instrument.read_register(REG_DIFF, number_of_decimals=1, signed=False)
                         
                         # Query the live status word register (Register 12)
-                        status_word = instrument.read_register(REG_STATUS, number_of_decimals=0, signed=False)
+                        status_word = instrument.read_register(REG_STATUS, number_of_decimals=0, signed=False, functioncode=4)
 
                         # Extract states using bitwise-AND masking logic derived from the database
                         comp_relay = "ON" if (status_word & 0x0001) else "OFF"
