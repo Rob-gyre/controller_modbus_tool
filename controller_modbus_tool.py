@@ -417,7 +417,7 @@ def run_custom_xr77u_workspace(cfg):
                 print("=" * 60)
             except Exception as e:
                 print(f"[X] Telemetry Query Interrupted/Failed: {e}")
-                    time.sleep(2.0)
+    
 
 
 
