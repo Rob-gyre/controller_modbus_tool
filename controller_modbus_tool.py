@@ -381,22 +381,22 @@ def run_custom_xr77u_workspace(cfg):
                         diff      = instrument.read_register(REG_DIFF, number_of_decimals=1, signed=False)
                         
                         # Query the live status word register (Register 12)
-                        status_word = instrument.read_register(REG_STATUS, number_of_decimals=0, signed=False, functioncode=4)
+                        # status_word = instrument.read_register(REG_STATUS, number_of_decimals=0, signed=False, functioncode=4)
 
                         # Extract states using bitwise-AND masking logic derived from the database
-                        comp_relay = "ON" if (status_word & 0x0001) else "OFF"
-                        defrost_state = "ACTIVE" if (status_word & 0x0002) else "INACTIVE"
-                        fan_relay = "RUNNING" if (status_word & 0x0004) else "STOPPED"
-                        alarm_status = "⚠️ CRITICAL ALERT" if (status_word & 0x0010) else "NORMAL"
+                        # comp_relay = "ON" if (status_word & 0x0001) else "OFF"
+                        # defrost_state = "ACTIVE" if (status_word & 0x0002) else "INACTIVE"
+                        # fan_relay = "RUNNING" if (status_word & 0x0004) else "STOPPED"
+                        # alarm_status = "⚠️ CRITICAL ALERT" if (status_word & 0x0010) else "NORMAL"
                         
                         print(f"[{time.strftime('%H:%M:%S')}] XR77U Custom Profile Telemetry Frame:")
                         print(f"  -> System Alarm Status:    {alarm_status}")
                         print(f"  -> Room Probe Temp (P1):   {room_temp} °C")
                         print(f"  -> Mapped Setpoint (SEt):  {setpoint} °C")
                         print(f"  -> Mapped Differential (Hy): {diff} °C")
-                        print(f"  -> Compressor Output Relay: {comp_relay}")
-                        print(f"  -> Defrost Cycle State:    {defrost_state}")
-                        print(f"  -> Evaporator Fan Relay:   {fan_relay}")
+                        print(f"  -> Compressor Output Relay: UNKNOWN (Mapping Test)")
+                        print(f"  -> Defrost Cycle State:     UNKNOWN (Mapping Test)")
+                        print(f"  -> Evaporator Fan Relay:    UNKNOWN (Mapping Test)")
                         print("-" * 45)
                     except Exception as e:
                         print(f"[{time.strftime('%H:%M:%S')}] [TIMEOUT/ERROR] Data drop: {e}")
