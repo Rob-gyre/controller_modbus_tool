@@ -376,41 +376,26 @@ def run_custom_xr77u_workspace(cfg):
             try:
                 while True:
                     try:
-                        # --- 1. FETCH LIVE SENSOR TELEMETRY ---
+                        # --- 1. SENSOR TELEMETRY INFRASTRUCTURE ---
                         p1_room = instrument.read_register(256, number_of_decimals=1, signed=True)
                         p2_evap = instrument.read_register(257, number_of_decimals=1, signed=True)
 
-                        # --- 2. FETCH REGULATION PARAMETERS ---
+                        # --- 2. CONFIGURATION STRINGS ENGINE ---
                         cf_raw  = instrument.read_register(768)
                         cf_unit = "°C" if cf_raw == 0 else "°F"
                         
+                        # --- 3. THE 5 CORE BENCH-VERIFIED PARAMETERS ---
                         setpoint = instrument.read_register(853, number_of_decimals=1, signed=True)
                         diff     = instrument.read_register(770, number_of_decimals=1, signed=False)
-                        
-                        # Confirmed: 771 and 772 are completely correct for your LS and US adjustments!
                         ls_limit = instrument.read_register(771, number_of_decimals=1, signed=True)
                         us_limit = instrument.read_register(772, number_of_decimals=1, signed=True)
-                        
+                        all_lim  = instrument.read_register(778, number_of_decimals=1, signed=True) # Confirmed ALL
+                        dao_raw  = instrument.read_register(781, signed=False)                     # Confirmed dAO
+
+                        # --- 4. SYSTEM CALIBRATION SETTINGS ---
                         ot_cal   = instrument.read_register(773, number_of_decimals=1, signed=True)
                         ac_delay = instrument.read_register(774)
-                        
-                        # Corrected: Reading Con and CoF as true raw parameters without accidental decimal scaling
-                        cct_dur  = instrument.read_register(775, number_of_decimals=1, signed=True)
-                        ccs_set  = instrument.read_register(776, number_of_decimals=1, signed=True)
-                        con_time = instrument.read_register(777, signed=True)
-                        cof_time = instrument.read_register(778, signed=True)
-
-                        # --- 3. FETCH DEFROST PARAMETERS ---
                         idf_int  = instrument.read_register(780)
-                        mdf_max  = instrument.read_register(781)
-                        fdt_drip = instrument.read_register(785)
-                        dad_dly  = instrument.read_register(786)
-
-                        # --- 4. FETCH CORRECTED ALARM PARAMETERS FROM THE XDB BUS ---
-                        all_lim  = instrument.read_register(832, number_of_decimals=1, signed=True) # Real ALL Location
-                        alu_lim  = instrument.read_register(833, number_of_decimals=1, signed=True) # Real ALU Location
-                        ald_dly  = instrument.read_register(834)                                   # Real ALd Location
-                        dao_raw  = instrument.read_register(836)                                   # Real dAO Location
 
                         # --- 5. PRINT UNIFIED DASHBOARD TO CONSOLE ---
                         print(f"[{time.strftime('%H:%M:%S')}] --- UNIFIED SYSTEM TELEMETRY FRAME ---")
@@ -424,26 +409,18 @@ def run_custom_xr77u_workspace(cfg):
                         print(f"    -> Maximum Setpoint (US):      {us_limit} {cf_unit}")
                         print(f"    -> Probe 1 Calibration (Ot):   {ot_cal} {cf_unit}")
                         print(f"    -> Anti-Short Cycle Delay (AC):{ac_delay} Mins")
-                        print(f"    -> Continuous Cycle Time (CCt):{cct_dur} Hours")
-                        print(f"    -> Continuous Cycle Set (CCS): {ccs_set} {cf_unit}")
-                        print(f"    -> Probe Fault Comp ON (Con):  {con_time} Mins")
-                        print(f"    -> Probe Fault Comp OFF (CoF): {cof_time} Mins")
                         print(f"  [DEFROST CONFIGURATION]")
                         print(f"    -> Interval Between Cycles (IdF):{idf_int} Hours")
-                        print(f"    -> Max Defrost Duration (MdF):  {mdf_max} Mins")
-                        print(f"    -> Draining Drip Time (Fdt):    {fdt_drip} Mins")
-                        print(f"    -> Max Display Delay (dAd):     {dad_dly} Mins")
                         print(f"  [ALARM THRESHOLDS]")
                         print(f"    -> Low Temp Alarm (ALL):       {all_lim} {cf_unit}")
-                        print(f"    -> High Temp Alarm (ALU):      {alu_lim} {cf_unit}")
-                        print(f"    -> Alarm Time Delay (ALd):     {ald_dly} Mins")
-                        print(f"    -> Startup Alarm Exclusion (dAO):{dao_raw} Mins")
+                        print(f"    -> Startup Alarm Exclusion (dAO):{dao_raw * 10} Mins")
                         print("=" * 60)
                     except Exception as e:
                         print(f"[{time.strftime('%H:%M:%S')}] [TIMEOUT/ERROR] Data drop: {e}")
                     time.sleep(2.0)
             except KeyboardInterrupt:
                 print("\nStream paused.")
+
 
 
 
