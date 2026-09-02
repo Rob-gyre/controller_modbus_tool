@@ -372,20 +372,69 @@ def run_custom_xr77u_workspace(cfg):
         if choice == "B":
             break
         elif choice == "1":
-            print(f"\nStreaming verified XR77U telemetry dashboard. Press Ctrl+C to stop...\n")
+            print(f"\nStreaming Full XR77U Live Dashboard. Press Ctrl+C to halt stream...\n")
             try:
                 while True:
                     try:
-                        # Fetch ONLY the confirmed holding registers (Function Code 3)
-                        room_temp = instrument.read_register(256, number_of_decimals=1, signed=True)
-                        setpoint  = instrument.read_register(853, number_of_decimals=1, signed=True)
-                        diff      = instrument.read_register(770, number_of_decimals=1, signed=False)
+                        # --- 1. FETCH LIVE SENSOR TELEMETRY ---
+                        # Raw sensor wire inputs (Function Code 3)
+                        p1_room = instrument.read_register(256, number_of_decimals=1, signed=True)
+                        p2_evap = instrument.read_register(257, number_of_decimals=1, signed=True)
+
+                        # --- 2. FETCH REGULATION PARAMETERS ---
+                        cf_raw  = instrument.read_register(768)
+                        cf_unit = "°F" if cf_raw == 1 else "°C"
                         
-                        print(f"[{time.strftime('%H:%M:%S')}] XR77U Custom Profile Telemetry Frame:")
-                        print(f"  -> Room Probe Temp (P1):   {room_temp} °C")
-                        print(f"  -> Mapped Setpoint (SEt):  {setpoint} °C")
-                        print(f"  -> Mapped Differential (Hy): {diff} °C")
-                        print("-" * 45)
+                        setpoint = instrument.read_register(853, number_of_decimals=1, signed=True)
+                        diff     = instrument.read_register(770, number_of_decimals=1, signed=False)
+                        ls_limit = instrument.read_register(771, number_of_decimals=1, signed=True)
+                        us_limit = instrument.read_register(772, number_of_decimals=1, signed=True)
+                        ot_cal   = instrument.read_register(773, number_of_decimals=1, signed=True)
+                        ac_delay = instrument.read_register(774)
+                        cct_dur  = instrument.read_register(775, number_of_decimals=1, signed=False)
+                        ccs_set  = instrument.read_register(776, number_of_decimals=1, signed=True)
+                        con_time = instrument.read_register(777)
+                        cof_time = instrument.read_register(778)
+
+                        # --- 3. FETCH DEFROST PARAMETERS ---
+                        idf_int  = instrument.read_register(780)
+                        mdf_max  = instrument.read_register(781)
+                        fdt_drip = instrument.read_register(785)
+                        dad_dly  = instrument.read_register(786)
+
+                        # --- 4. FETCH ALARM PARAMETERS ---
+                        all_lim  = instrument.read_register(835, number_of_decimals=1, signed=True)
+                        alu_lim  = instrument.read_register(836, number_of_decimals=1, signed=True)
+                        ald_dly  = instrument.read_register(837)
+                        dao_stUP = instrument.read_register(838, number_of_decimals=1, signed=False)
+
+                        # --- 5. PRINT UNIFIED DASHBOARD TO CONSOLE ---
+                        print(f"[{time.strftime('%H:%M:%S')}] --- UNIFIED SYSTEM TELEMETRY FRAME ---")
+                        print(f"  [LIVE PROBES]")
+                        print(f"    -> Room Temperature (P1):      {p1_room} {cf_unit}")
+                        print(f"    -> Evaporator Temp (P2):       {p2_evap} {cf_unit}")
+                        print(f"  [REGULATION SETTINGS]")
+                        print(f"    -> Current Setpoint (SEt):     {setpoint} {cf_unit}")
+                        print(f"    -> Differential (Hy):          {diff} {cf_unit}")
+                        print(f"    -> Minimum Setpoint (LS):      {ls_limit} {cf_unit}")
+                        print(f"    -> Maximum Setpoint (US):      {us_limit} {cf_unit}")
+                        print(f"    -> Probe 1 Calibration (Ot):   {ot_cal} {cf_unit}")
+                        print(f"    -> Anti-Short Cycle Delay (AC):{ac_delay} Mins")
+                        print(f"    -> Continuous Cycle Time (CCt):{cct_dur} Hours")
+                        print(f"    -> Continuous Cycle Set (CCS): {ccs_set} {cf_unit}")
+                        print(f"    -> Probe Fault Comp ON (Con):  {con_time} Mins")
+                        print(f"    -> Probe Fault Comp OFF (CoF): {cof_time} Mins")
+                        print(f"  [DEFROST CONFIGURATION]")
+                        print(f"    -> Interval Between Cycles (IdF):{idf_int} Hours")
+                        print(f"    -> Max Defrost Duration (MdF):  {mdf_max} Mins")
+                        print(f"    -> Draining Drip Time (Fdt):    {fdt_drip} Mins")
+                        print(f"    -> Max Display Delay (dAd):     {dad_dly} Mins")
+                        print(f"  [ALARM THRESHOLDS]")
+                        print(f"    -> Low Temp Alarm (ALL):       {all_lim} {cf_unit}")
+                        print(f"    -> High Temp Alarm (ALU):      {alu_lim} {cf_unit}")
+                        print(f"    -> Alarm Time Delay (ALd):     {ald_dly} Mins")
+                        print(f"    -> Startup Alarm Exclusion (dAO):{dao_stUP} Hours")
+                        print("=" * 60)
                     except Exception as e:
                         print(f"[{time.strftime('%H:%M:%S')}] [TIMEOUT/ERROR] Data drop: {e}")
                     time.sleep(2.0)
