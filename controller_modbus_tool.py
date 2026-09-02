@@ -358,7 +358,7 @@ def run_custom_xr77u_workspace(cfg):
 
     # Mapped registers derived from your workbench validation sweeps
     REG_ROOM_TEMP = 256   # 0x0100 - Live Room Probe (P1)
-    REG_SETPOINT  = 819   # 0x0333 - Mapped Temperature Setpoint (SEt)
+    REG_SETPOINT  = 853   # 0x0355 - Mapped Temperature Setpoint (SEt)
     REG_DIFF      = 770   # 0x0302 - Mapped Regulation Differential (Hy)
 
     while True:
