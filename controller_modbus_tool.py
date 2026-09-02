@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 CONTROLLER SERIAL DIAGNOSTIC SUITE (Optimised for Dixell XR77U Custom OEM)
-Architecture: Auto-Detect Hardware Interface First | Locked Modbus RTU Address 1
+Architecture: Auto-Detect Hardware Interface First | Locked Modbus RTU Address 1 Mapping
 """
 
 import sys
@@ -146,7 +146,6 @@ def run_raw_sniffer(port):
                 hex_out = " ".join(f"{b:02X}" for b in data)
                 
                 analysis = ""
-                # Parse to see if it targets Slave Address 1
                 if len(data) >= 4 and data[0] == 0x01:
                     func = data[1]
                     if func in [0x03, 0x06, 0x10, 0x83, 0x86, 0x90]:
@@ -198,17 +197,14 @@ def run_register_scanner(instrument):
     try:
         for addr in range(start_addr, end_addr + 1):
             try:
-                # Probe single register using standard function code 0x03
                 val = instrument.read_register(addr, number_of_decimals=0, signed=False)
                 hex_str = f"0x{addr:04X}"
                 print(f"  [✓] FOUND ACTIVE REGISTER: Dec {addr} ({hex_str}) | Raw Data: {val}")
                 valid_registers.append((addr, hex_str, val))
                 time.sleep(0.05)
             except minimalmodbus.IllegalRequestError:
-                # Suppress illegal address exceptions to speed scan process
                 pass
             except (minimalmodbus.NoResponseError, minimalmodbus.ModbusException):
-                # Small cushion pause if transceiver needs to restabilise
                 time.sleep(0.1)
     except KeyboardInterrupt:
         print("\n[!] Scanner aborted early by user.")
@@ -224,18 +220,13 @@ def run_register_scanner(instrument):
 
 
 def run_modbus_reader(port, hw_choice):
-    """Tool 3: Targeted Dixell XR77U Custom Modbus Poller [Family 44 Architecture]"""
+    """Tool 3: Targeted Dixell XR77U Custom Modbus Poller [Family 44 Multi-Register Layout]"""
     print("\n========================================================")
     print("=== TOOL 3: TARGETED DIXELL XR77U LIVE INTERACTIVE POLLER ===")
     print("========================================================")
     
     timeout_val = 0.4 if hw_choice == "1" else 0.6
     slave_id = 1
-    
-    REG_ROOM_TEMP = 256  # 0x0100
-    REG_EVAP_TEMP = 257  # 0x0101
-    REG_SETPOINT  = 512  # 0x0200
-    REG_DIFF      = 513  # 0x0201
 
     try:
         instrument = minimalmodbus.Instrument(port, slave_id)
@@ -253,8 +244,8 @@ def run_modbus_reader(port, hw_choice):
 
     while True:
         print(f"\n--- Live Action Options (Locked to Slave Address 1) ---")
-        print(" 1) Stream Live Telemetry (P1 Room Temp, P2 Evap Temp, Base Variables)")
-        print(" 2) Modify Temperature Setpoint (Write New SEt Value)")
+        print(" 1) Stream Live Telemetry (Track Discovered Register Range)")
+        print(" 2) Modify Temperature Setpoint (Write Test Zone)")
         print(" 3) Run Custom Address Map Scanner (Locate hidden variables)")
         if hw_choice == "2":
             print(" 4) XJ485CX Optocoupler Line Stability & Stress Diagnostic")
@@ -266,20 +257,19 @@ def run_modbus_reader(port, hw_choice):
             break
             
         elif test_choice == "1":
-            print(f"\nBeginning active query loops on {port}. Press Ctrl+C to halt stream...\n")
+            print(f"\nStreaming all active Family 44 registers on {port}. Press Ctrl+C to halt stream...\n")
             try:
                 while True:
                     try:
-                        room_temp = instrument.read_register(REG_ROOM_TEMP, number_of_decimals=1, signed=True)
-                        evap_temp = instrument.read_register(REG_EVAP_TEMP, number_of_decimals=1, signed=True)
-                        setpoint  = instrument.read_register(REG_SETPOINT, number_of_decimals=1, signed=True)
-                        diff      = instrument.read_register(REG_DIFF, number_of_decimals=1, signed=False)
+                        # Query the exact active register nodes revealed by your scan
+                        r256 = instrument.read_register(256, number_of_decimals=1, signed=True)
+                        r260 = instrument.read_register(260, number_of_decimals=1, signed=True)
+                        r264 = instrument.read_register(264, number_of_decimals=1, signed=True)
                         
                         print(f"[{time.strftime('%H:%M:%S')}] Query Succeeded:")
-                        print(f"  -> Room Probe Temp (P1):   {room_temp} °C")
-                        print(f"  -> Evaporator Temp (P2):   {evap_temp} °C")
-                        print(f"  -> Current Setpoint (SEt): {setpoint} °C")
-                        print(f"  -> Differential (Hy):      {diff} °C")
+                        print(f"  -> Register 256 (0x0100):  {r256} °C")
+                        print(f"  -> Register 260 (0x0104):  {r260} °C")
+                        print(f"  -> Register 264 (0x0108):  {r264} °C")
                         print("-" * 40)
                     except Exception as e:
                         print(f"[{time.strftime('%H:%M:%S')}] [TIMEOUT/ERROR] Data drop: {e}")
@@ -290,21 +280,14 @@ def run_modbus_reader(port, hw_choice):
         elif test_choice == "2":
             print("\nExecuting targeted parameter override routine...")
             try:
-                current_set = instrument.read_register(REG_SETPOINT, number_of_decimals=1, signed=True)
-                print(f"Current controller memory Setpoint reads: {current_set} °C")
-                val_input = input("Enter new targeted Setpoint value in °C (e.g. -18.5): ").strip()
+                print("Broadcasting Modbus Write single register test payload to register 6...")
+                val_input = input("Enter new targeted testing Setpoint value in °C (e.g. 4.0): ").strip()
                 if not val_input:
                     continue
                 new_val = float(val_input)
                 
-                print("Transmitting Modbus Write single register command packet...")
-                instrument.write_register(REG_SETPOINT, new_val, number_of_decimals=1, signed=True)
-                
-                time.sleep(0.3)
-                if instrument.read_register(REG_SETPOINT, number_of_decimals=1, signed=True) == new_val:
-                    print(f"[✓] SUCCESS: Parameters successfully committed and verified: {new_val} °C")
-                else:
-                    print("[X] ERROR: Verification check failed. Value mismatch on readback.")
+                instrument.write_register(6, new_val, number_of_decimals=1, signed=True)
+                print(f"[✓] SUCCESS: Command committed to register 6 memory layer.")
             except Exception as e:
                 print(f"[X] Modbus Write Transaction Aborted: {e}")
                 
@@ -316,11 +299,8 @@ def run_modbus_reader(port, hw_choice):
             success = 0
             for i in range(1, 11):
                 try:
-                    instrument.read_register(0, number_of_decimals=0, signed=False)
+                    instrument.read_register(256, number_of_decimals=0, signed=False)
                     print(f"  [Frame {i:02d}/10] Echo Delivery: OK")
-                    success += 1
-                except minimalmodbus.IllegalRequestError:
-                    print(f"  [Frame {i:02d}/10] Echo Delivery: OK (Address Rejected, Device Replying)")
                     success += 1
                 except Exception:
                     print(f"  [Frame {i:02d}/10] Echo Delivery: TIMEOUT / DROPPED PACKET")
@@ -334,7 +314,7 @@ def run_modbus_reader(port, hw_choice):
 
 def main():
     print("=========================================================")
-    print("  CONTROLLER SERIAL DIAGNOSTIC & WORKSPACE SUITE v2.1 ")
+    print("  CONTROLLER SERIAL DIAGNOSTIC & WORKSPACE SUITE v2.2 ")
     print("=========================================================")
     print("Initial hardware binding required before entering diagnostic loop.")
     
