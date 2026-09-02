@@ -376,37 +376,22 @@ def run_custom_xr77u_workspace(cfg):
             try:
                 while True:
                     try:
-                        # 1. Fetch analog values (Function Code 3)
+                        # Fetch ONLY the confirmed holding registers (Function Code 3)
                         room_temp = instrument.read_register(256, number_of_decimals=1, signed=True)
                         setpoint  = instrument.read_register(853, number_of_decimals=1, signed=True)
                         diff      = instrument.read_register(770, number_of_decimals=1, signed=False)
                         
-                        # 2. Fetch live relay bits via Discrete Inputs (Function Code 2)
-                        comp_bit = instrument.read_bit(0, functioncode=2)
-                        def_bit  = instrument.read_bit(1, functioncode=2)
-                        fan_bit  = instrument.read_bit(2, functioncode=2)
-                        alm_bit  = instrument.read_bit(3, functioncode=2)
-
-                        # Convert raw binary bits into clean dashboard text strings
-                        comp_relay    = "ON" if comp_bit else "OFF"
-                        defrost_state = "ACTIVE" if def_bit else "INACTIVE"
-                        fan_relay     = "RUNNING" if fan_bit else "STOPPED"
-                        alarm_status  = "⚠️ CRITICAL ALERT" if alm_bit else "NORMAL"
-                        
                         print(f"[{time.strftime('%H:%M:%S')}] XR77U Custom Profile Telemetry Frame:")
-                        print(f"  -> System Alarm Status:    {alarm_status}")
                         print(f"  -> Room Probe Temp (P1):   {room_temp} °C")
                         print(f"  -> Mapped Setpoint (SEt):  {setpoint} °C")
                         print(f"  -> Mapped Differential (Hy): {diff} °C")
-                        print(f"  -> Compressor Output Relay: {comp_relay}")
-                        print(f"  -> Defrost Cycle State:    {defrost_state}")
-                        print(f"  -> Evaporator Fan Relay:   {fan_relay}")
                         print("-" * 45)
                     except Exception as e:
                         print(f"[{time.strftime('%H:%M:%S')}] [TIMEOUT/ERROR] Data drop: {e}")
                     time.sleep(2.0)
             except KeyboardInterrupt:
                 print("\nStream paused.")
+
 
 
         elif choice == "2":
