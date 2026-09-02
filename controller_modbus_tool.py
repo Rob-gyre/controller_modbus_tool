@@ -376,33 +376,38 @@ def run_custom_xr77u_workspace(cfg):
             try:
                 while True:
                     try:
-                        room_temp = instrument.read_register(REG_ROOM_TEMP, number_of_decimals=1, signed=True)
-                        setpoint  = instrument.read_register(REG_SETPOINT, number_of_decimals=1, signed=True)
-                        diff      = instrument.read_register(REG_DIFF, number_of_decimals=1, signed=False)
+                        # 1. Fetch analog values (Function Code 3)
+                        room_temp = instrument.read_register(256, number_of_decimals=1, signed=True)
+                        setpoint  = instrument.read_register(853, number_of_decimals=1, signed=True)
+                        diff      = instrument.read_register(770, number_of_decimals=1, signed=False)
                         
-                        # Query the live status word register (Register 12)
-                        # status_word = instrument.read_register(REG_STATUS, number_of_decimals=0, signed=False, functioncode=4)
+                        # 2. Fetch live relay bits via Discrete Inputs (Function Code 2)
+                        comp_bit = instrument.read_bit(0, functioncode=2)
+                        def_bit  = instrument.read_bit(1, functioncode=2)
+                        fan_bit  = instrument.read_bit(2, functioncode=2)
+                        alm_bit  = instrument.read_bit(3, functioncode=2)
 
-                        # Extract states using bitwise-AND masking logic derived from the database
-                        # comp_relay = "ON" if (status_word & 0x0001) else "OFF"
-                        # defrost_state = "ACTIVE" if (status_word & 0x0002) else "INACTIVE"
-                        # fan_relay = "RUNNING" if (status_word & 0x0004) else "STOPPED"
-                        # alarm_status = "⚠️ CRITICAL ALERT" if (status_word & 0x0010) else "NORMAL"
+                        # Convert raw binary bits into clean dashboard text strings
+                        comp_relay    = "ON" if comp_bit else "OFF"
+                        defrost_state = "ACTIVE" if def_bit else "INACTIVE"
+                        fan_relay     = "RUNNING" if fan_bit else "STOPPED"
+                        alarm_status  = "⚠️ CRITICAL ALERT" if alm_bit else "NORMAL"
                         
                         print(f"[{time.strftime('%H:%M:%S')}] XR77U Custom Profile Telemetry Frame:")
-                        print(f"  -> System Alarm Status:     UNKNOWN (Mapping Test)")
+                        print(f"  -> System Alarm Status:    {alarm_status}")
                         print(f"  -> Room Probe Temp (P1):   {room_temp} °C")
                         print(f"  -> Mapped Setpoint (SEt):  {setpoint} °C")
                         print(f"  -> Mapped Differential (Hy): {diff} °C")
-                        print(f"  -> Compressor Output Relay: UNKNOWN (Mapping Test)")
-                        print(f"  -> Defrost Cycle State:     UNKNOWN (Mapping Test)")
-                        print(f"  -> Evaporator Fan Relay:    UNKNOWN (Mapping Test)")
+                        print(f"  -> Compressor Output Relay: {comp_relay}")
+                        print(f"  -> Defrost Cycle State:    {defrost_state}")
+                        print(f"  -> Evaporator Fan Relay:   {fan_relay}")
                         print("-" * 45)
                     except Exception as e:
                         print(f"[{time.strftime('%H:%M:%S')}] [TIMEOUT/ERROR] Data drop: {e}")
                     time.sleep(2.0)
             except KeyboardInterrupt:
                 print("\nStream paused.")
+
 
         elif choice == "2":
             try:
