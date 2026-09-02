@@ -446,7 +446,7 @@ def run_custom_xr77u_workspace(cfg):
         input("\nPress ENTER to continue inside current profile environment...")
         
         
-                elif choice == "3":
+        elif choice == "3":
             print("\n=== AUTOMATED PARAMETER CAPTURE WIZARD (DIFF-HUNTER) ===")
             print("Step 1: Reading baseline snapshot of memory range 768-845...")
             
