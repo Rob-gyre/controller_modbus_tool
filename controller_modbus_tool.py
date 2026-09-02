@@ -372,54 +372,53 @@ def run_custom_xr77u_workspace(cfg):
         if choice == "B":
             break
         elif choice == "1":
-            print(f"\nStreaming Full XR77U Live Dashboard. Press Ctrl+C to halt stream...\n")
+            print(f"\n[{time.strftime('%H:%M:%S')}] Querying full controller memory map...")
             try:
-                while True:
-                    try:
-                        # --- 1. SENSOR TELEMETRY INFRASTRUCTURE ---
-                        p1_room = instrument.read_register(256, number_of_decimals=1, signed=True)
-                        p2_evap = instrument.read_register(257, number_of_decimals=1, signed=True)
+                # --- 1. SENSOR TELEMETRY INFRASTRUCTURE ---
+                p1_room = instrument.read_register(256, number_of_decimals=1, signed=True)
+                p2_evap = instrument.read_register(257, number_of_decimals=1, signed=True)
 
-                        # --- 2. CONFIGURATION STRINGS ENGINE ---
-                        cf_raw  = instrument.read_register(768)
-                        cf_unit = "°C" if cf_raw == 0 else "°F"
-                        
-                        # --- 3. THE 5 CORE BENCH-VERIFIED PARAMETERS ---
-                        setpoint = instrument.read_register(853, number_of_decimals=1, signed=True)
-                        diff     = instrument.read_register(770, number_of_decimals=1, signed=False)
-                        ls_limit = instrument.read_register(771, number_of_decimals=1, signed=True)
-                        us_limit = instrument.read_register(772, number_of_decimals=1, signed=True)
-                        all_lim  = instrument.read_register(778, number_of_decimals=1, signed=True) # Confirmed ALL
-                        dao_raw  = instrument.read_register(781, signed=False)                     # Confirmed dAO
+                # --- 2. CONFIGURATION STRINGS ENGINE ---
+                cf_raw  = instrument.read_register(768)
+                cf_unit = "°C" if cf_raw == 0 else "°F"
+                
+                # --- 3. THE 5 CORE BENCH-VERIFIED PARAMETERS ---
+                setpoint = instrument.read_register(853, number_of_decimals=1, signed=True)
+                diff     = instrument.read_register(770, number_of_decimals=1, signed=False)
+                ls_limit = instrument.read_register(771, number_of_decimals=1, signed=True)
+                us_limit = instrument.read_register(772, number_of_decimals=1, signed=True)
+                all_lim  = instrument.read_register(778, number_of_decimals=1, signed=True) # Confirmed ALL
+                dao_raw  = instrument.read_register(781, signed=False)                     # Confirmed dAO
 
-                        # --- 4. SYSTEM CALIBRATION SETTINGS ---
-                        ot_cal   = instrument.read_register(773, number_of_decimals=1, signed=True)
-                        ac_delay = instrument.read_register(774)
-                        idf_int  = instrument.read_register(780)
+                # --- 4. SYSTEM CALIBRATION SETTINGS ---
+                ot_cal   = instrument.read_register(773, number_of_decimals=1, signed=True)
+                ac_delay = instrument.read_register(774)
+                idf_int  = instrument.read_register(780)
 
-                        # --- 5. PRINT UNIFIED DASHBOARD TO CONSOLE ---
-                        print(f"[{time.strftime('%H:%M:%S')}] --- UNIFIED SYSTEM TELEMETRY FRAME ---")
-                        print(f"  [LIVE PROBES]")
-                        print(f"    -> Room Temperature (P1):      {p1_room} {cf_unit}")
-                        print(f"    -> Evaporator Temp (P2):       {p2_evap} {cf_unit}")
-                        print(f"  [REGULATION SETTINGS]")
-                        print(f"    -> Current Setpoint (SEt):     {setpoint} {cf_unit}")
-                        print(f"    -> Differential (Hy):          {diff} {cf_unit}")
-                        print(f"    -> Minimum Setpoint (LS):      {ls_limit} {cf_unit}")
-                        print(f"    -> Maximum Setpoint (US):      {us_limit} {cf_unit}")
-                        print(f"    -> Probe 1 Calibration (Ot):   {ot_cal} {cf_unit}")
-                        print(f"    -> Anti-Short Cycle Delay (AC):{ac_delay} Mins")
-                        print(f"  [DEFROST CONFIGURATION]")
-                        print(f"    -> Interval Between Cycles (IdF):{idf_int} Hours")
-                        print(f"  [ALARM THRESHOLDS]")
-                        print(f"    -> Low Temp Alarm (ALL):       {all_lim} {cf_unit}")
-                        print(f"    -> Startup Alarm Exclusion (dAO):{dao_raw * 10} Mins")
-                        print("=" * 60)
-                    except Exception as e:
-                        print(f"[{time.strftime('%H:%M:%S')}] [TIMEOUT/ERROR] Data drop: {e}")
+                # --- 5. PRINT UNIFIED DASHBOARD TO CONSOLE ---
+                print("\n" + "=" * 60)
+                print(f"[{time.strftime('%H:%M:%S')}] --- UNIFIED SYSTEM TELEMETRY FRAME ---")
+                print("=" * 60)
+                print(f"  [LIVE PROBES]")
+                print(f"    -> Room Temperature (P1):      {p1_room} {cf_unit}")
+                print(f"    -> Evaporator Temp (P2):       {p2_evap} {cf_unit}")
+                print(f"  [REGULATION SETTINGS]")
+                print(f"    -> Current Setpoint (SEt):     {setpoint} {cf_unit}")
+                print(f"    -> Differential (Hy):          {diff} {cf_unit}")
+                print(f"    -> Minimum Setpoint (LS):      {ls_limit} {cf_unit}")
+                print(f"    -> Maximum Setpoint (US):      {us_limit} {cf_unit}")
+                print(f"    -> Probe 1 Calibration (Ot):   {ot_cal} {cf_unit}")
+                print(f"    -> Anti-Short Cycle Delay (AC):{ac_delay} Mins")
+                print(f"  [DEFROST CONFIGURATION]")
+                print(f"    -> Interval Between Cycles (IdF):{idf_int} Hours")
+                print(f"  [ALARM THRESHOLDS]")
+                print(f"    -> Low Temp Alarm (ALL):       {all_lim} {cf_unit}")
+                print(f"    -> Startup Alarm Exclusion (dAO):{dao_raw * 10} Mins")
+                print("=" * 60)
+            except Exception as e:
+                print(f"[X] Telemetry Query Interrupted/Failed: {e}")
                     time.sleep(2.0)
-            except KeyboardInterrupt:
-                print("\nStream paused.")
+
 
 
 
