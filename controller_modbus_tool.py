@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
-CONTROLLER SERIAL DIAGNOSTIC SUITE (Optimised for Dixell XR77U Custom OEM)
-Architecture: Auto-Detect Hardware Interface First | Locked Modbus RTU Address 1 Mapping
+UNIVERSAL MODBUS DIAGNOSTIC SUITE & CONTROLLER ANALYSER (v3.0)
+Includes specialized profile mapping for Dixell XR77U Custom OEM (2C310000)
 """
 
 import sys
 import time
 
-# Verify global dependencies are accessible
 try:
     import serial
-    import serial.tools.list_ports  # System USB device scanner
+    import serial.tools.list_ports
 except ImportError:
     print("Error: 'pyserial' is missing. Run: pip install pyserial")
     sys.exit(1)
@@ -20,6 +19,23 @@ try:
 except ImportError:
     print("Error: 'minimalmodbus' is missing. Run: pip install minimalmodbus")
     sys.exit(1)
+
+
+class ConfigWorkspace:
+    """Manages global Modbus RTU communication environment variables."""
+    def __init__(self):
+        self.port = None
+        self.hw_choice = "2"    # Default to Method B (RS-485 via XJ485CX)
+        self.slave_id = 1       # Default Slave Address
+        self.baudrate = 9600    # Default speed
+        self.parity = serial.PARITY_NONE
+        self.stopbits = 1
+        self.timeout = 0.6      # Dynamic time cushion
+
+    def get_parity_string(self):
+        if self.parity == serial.PARITY_EVEN: return "Even"
+        if self.parity == serial.PARITY_ODD: return "Odd"
+        return "None"
 
 
 def calculate_modbus_crc(data: bytes) -> bytes:
@@ -79,93 +95,138 @@ def select_hardware_topology():
     choice = ""
     while choice not in ["1", "2"]:
         choice = input("Select Setup Option (1 or 2): ").strip()
+
+
+
         if choice not in ["1", "2"]:
             print("[!] Invalid setup choice. Enter 1 or 2.")
     return choice
 
 
-def run_hardware_test(port, hw_choice):
+def run_initialization_wizard(cfg):
+    """Wizard that dynamically binds ports and configures universal Modbus parameters."""
+    print("\n" + "="*55)
+    print("      INITIALISATION WIZARD: CONFIGURE SERIAL WORKSPACE    ")
+    print("="*55)
+    
+    cfg.port = scan_and_select_port()
+    if not cfg.port:
+        print("\n[!] No communications interface bound. Exiting wizard.")
+        return
+
+    # Hardware Connection Type Selection
+    hardware_choice = select_hardware_topology()
+    if hardware_choice == "1":
+        cfg.hw_choice = "1"
+        cfg.timeout = 0.4
+    else:
+        cfg.hw_choice = "2"
+        cfg.timeout = 0.6
+
+    # Advanced Universal Modbus Variable Prompts
+    print("\n--- Configure Universal Modbus Parameters ---")
+    
+    slave_in = input(f"Enter Target Slave ID (1-247) [Default {cfg.slave_id}]: ").strip()
+    if slave_in: cfg.slave_id = int(slave_in)
+        
+    baud_in = input(f"Enter Baud Rate (9600, 19200, 38400) [Default {cfg.baudrate}]: ").strip()
+    if baud_in: cfg.baudrate = int(baud_in)
+        
+    parity_in = input("Enter Parity (N=None, E=Even, O=Odd) [Default N]: ").strip().upper()
+    if parity_in == 'E': cfg.parity = serial.PARITY_EVEN
+    elif parity_in == 'O': cfg.parity = serial.PARITY_ODD
+    else: cfg.parity = serial.PARITY_NONE
+        
+    stop_in = input(f"Enter Stop Bits (1 or 2) [Default {cfg.stopbits}]: ").strip()
+    if stop_in: cfg.stopbits = int(stop_in)
+    
+    print(f"\n[✓] Config Complete: Bound to {cfg.port} | Slave Address: {cfg.slave_id} | {cfg.baudrate} bps")
+
+
+def build_instrument_context(cfg, target_slave=None):
+    """Generates an operational MinimalModbus context based on dynamic workspace configurations."""
+    slave = target_slave if target_slave is not None else cfg.slave_id
+    try:
+        instrument = minimalmodbus.Instrument(cfg.port, slave)
+        instrument.serial.baudrate = cfg.baudrate
+        instrument.serial.bytesize = 8
+        instrument.serial.parity = cfg.parity
+        instrument.serial.stopbits = cfg.stopbits
+        instrument.serial.timeout = cfg.timeout
+        instrument.mode = minimalmodbus.MODE_RTU
+        return instrument
+    except Exception as e:
+        print(f"[X] Modbus Engine Hook Initialization Setup Failed: {e}")
+        return None
+
+
+def run_hardware_test(cfg):
     """Tool 1: Hardware & Serial Port Loopback Test [Context-Aware Instruction Engine]"""
-    print("\n========================================================")
-    print("=== TOOL 1: HARDWARE & SERIAL PORT LOOPBACK DIAGNOSTIC ===")
-    print("========================================================")
+    print("\n=== TOOL 1: HARDWARE & SERIAL PORT LOOPBACK DIAGNOSTIC ===")
     print("⚠️  CRITICAL SAFETY WARNINGS FOR BENCH TESTING:")
     print(" -> Ensure your USB-to-TTL adapter logic jumper is physically locked to 5V (NOT 3.3V).")
-    print(" -> If the XR77U controller is mains-powered, DISCONNECT the VCC/5V wire from your adapter.")
-    print("    Only bridge TX, RX, and GND. Backfeeding VCC will destroy your computer's USB controller.")
+    print(" -> If the controller is mains-powered, DISCONNECT the VCC/5V wire from your adapter.")
     print("\n--- WIRING ACTIONS REQUIRED NOW BEFORE CONTINUING ---")
     
-    if hw_choice == "1":
-        print("[METHOD A SETUP] Take a temporary jumper wire and short the TXD pin directly")
-        print("                 to the RXD pin on your USB-to-TTL board terminals.")
+    if cfg.hw_choice == "1":
+        print("[METHOD A SETUP] Bridge TXD pin directly to RXD pin on your USB-to-TTL board.")
     else:
-        print("[METHOD B SETUP] Take a temporary jumper wire and short the A(+) terminal directly")
-        print("                 to the B(-) terminal on your USB-to-RS485 board blocks.")
+        print("[METHOD B SETUP] Bridge A(+) terminal directly to B(-) terminal on your USB-to-RS485 block.")
         
     input("\n[!] Once the physical loopback bridge jumper wire is secured, press ENTER to test...")
     print("Executing electrical loopback payload broadcast...")
 
     try:
-        ser = serial.Serial(port, baudrate=9600, timeout=1)
-        payload = b"DIXELL_LOOPBACK_VERIFY_2C310000"
+        ser = serial.Serial(cfg.port, baudrate=cfg.baudrate, timeout=1)
+        payload = b"DIXELL_UNIVERSAL_LOOPBACK_VERIFY"
         ser.write(payload)
         time.sleep(0.1)
         
         result = ser.read(len(payload))
         ser.close()
-        
+
         if result == payload:
             print(f"\n[✓] SUCCESS: Electrical loopback verified perfectly! (Bytes match: {result.decode()})")
-            print("    Your serial port, system drivers, and adapter chip are working cleanly.")
         else:
             print(f"\n[X] FAILURE: Cable opened but data frame dropped or corrupted.")
-            print(f"    Sent: {payload}")
-            print(f"    Recv: {result}")
-            print("    -> Action: Check that the jumper wire is making solid contact with the pins.")
     except Exception as e:
-        print(f"\n[X] OS DRIVER ERROR: Could not open {port}. Details: {e}")
+        print(f"\n[X] OS DRIVER ERROR: Could not open {cfg.port}. Details: {e}")
         
     input("\nRemove the bridge jumper wire, then press ENTER to return to menu...")
 
 
-def run_raw_sniffer(port):
+def run_raw_sniffer(cfg):
     """Tool 2: Raw Byte Sniffer [Modbus RTU Frame-Aware Analyzer]"""
-    print("\n========================================================")
-    print("=== TOOL 2: REAL-TIME MODBUS RTU FRAME ANALYSER / SNIFFER ===")
-    print("========================================================")
-    print(f"Passively monitoring all traffic on {port} at 9600 bps.")
-    print("Auto-checking custom XR77U Slave Address 01 transaction blocks...")
+    print("\n=== TOOL 2: REAL-TIME MODBUS RTU FRAME ANALYSER / SNIFFER ===")
+    print(f"Passively monitoring all traffic on {cfg.port} at {cfg.baudrate} bps.")
+    print(f"Filtering for transaction blocks matching Slave Address {cfg.slave_id}...")
     print("Press Ctrl+C at any time to break the sniffer and return to the menu.\n")
 
     try:
-        ser = serial.Serial(port, baudrate=9600, timeout=0.5)
+        ser = serial.Serial(cfg.port, baudrate=cfg.baudrate, timeout=0.5)
         while True:
             if ser.in_waiting > 0:
-                time.sleep(0.04)  # Small processing buffer to allow trailing frame bytes to land
+                time.sleep(0.04)
                 data = ser.read(ser.in_waiting)
                 hex_out = " ".join(f"{b:02X}" for b in data)
                 
                 analysis = ""
-                if len(data) >= 4 and data[0] == 0x01:
+                if len(data) >= 4 and data[0] == cfg.slave_id:
                     func = data[1]
-                    if func in [0x03, 0x06, 0x10, 0x83, 0x86, 0x90]:
+                    if func in [0x01, 0x02, 0x03, 0x04, 0x06, 0x10, 0x83, 0x86, 0x90]:
                         msg_bytes = data[:-2]
                         expected_crc = calculate_modbus_crc(msg_bytes)
                         actual_crc = data[-2:]
                         
                         if expected_crc == actual_crc:
-                            if func == 0x03:
-                                analysis = " -> [Valid Modbus Read Frame]"
-                            elif func == 0x06:
-                                analysis = " -> [Valid Modbus Write Register Frame]"
-                            elif func & 0x80:
-                                analysis = " -> [Modbus EXCEPTION Response Code returned from unit]"
+                            if func in [0x03, 0x04]: analysis = " -> [Valid Modbus Read Request/Response]"
+                            elif func in [0x06, 0x10]: analysis = " -> [Valid Modbus Write Request/Response]"
+                            elif func & 0x80: analysis = " -> [Modbus EXCEPTION/ERROR Response from device]"
                         else:
                             analysis = " -> [Structure matches Modbus layout but CRC Check FAILED]"
 
                 print(f"[{time.strftime('%H:%M:%S')}] RX: {hex_out}{analysis}")
             time.sleep(0.01)
-            
     except KeyboardInterrupt:
         print("\n[✓] Sniffing paused.")
     except Exception as e:
@@ -173,33 +234,41 @@ def run_raw_sniffer(port):
     finally:
         if 'ser' in locals() and ser.is_open:
             ser.close()
-            
-    input("\nPress ENTER to return to the principal workspace menu...")
+    input("\nPress ENTER to return to the workspace menu...")
 
 
-def run_register_scanner(instrument):
-    """Utility Tool: Scans Modbus register blocks systematically to find valid operational zones."""
-    print("\n========================================================")
-    print("=== UTILITY: DIXELL OEM DYNAMIC REGISTER SCANNER ===")
-    print("========================================================")
-    print("Finds valid map addresses to bypass 'illegal data address' blocks.")
-    
+def run_universal_register_scanner(cfg):
+    """Tool 3: Universal Dynamic Register Scanner (Supports FC3 and FC4)"""
+    print("\n=== TOOL 3: UNIVERSAL DYNAMIC REGISTER MEMORY SCANNER ===")
+    instrument = build_instrument_context(cfg)
+    if not instrument: return
+
+    print("Select Modbus Function Code for Scan Probing:")
+    print("  3) Function Code 0x03 (Read Holding Registers - Standard Settings/Config)")
+    print("  4) Function Code 0x04 (Read Input Registers - Read-Only Analog Probes)")
+    fc_choice = input("Select Function Code (3 or 4) [Default 3]: ").strip()
+    use_fc4 = True if fc_choice == "4" else False
+
     try:
         start_addr = int(input("Enter Scan Starting Address (Decimal, e.g., 0 or 256): ").strip() or "0")
         end_addr = int(input("Enter Scan Ending Address (Decimal, e.g., 1000): ").strip() or "1000")
     except ValueError:
-        print("[!] Invalid integer parameters. Reverting to test environment.")
+        print("[!] Invalid integer parameters. Reverting to menu.")
         return
 
-    print(f"\nScanning range {start_addr} to {end_addr} on Slave ID 1... Press Ctrl+C to abort.")
+    print(f"\nScanning range {start_addr} to {end_addr} on Slave ID {cfg.slave_id}... Press Ctrl+C to abort.")
     valid_registers = []
 
     try:
         for addr in range(start_addr, end_addr + 1):
             try:
-                val = instrument.read_register(addr, number_of_decimals=0, signed=False)
+                if use_fc4:
+                    val = instrument.read_register(addr, number_of_decimals=0, signed=False, functioncode=4)
+                else:
+                    val = instrument.read_register(addr, number_of_decimals=0, signed=False, functioncode=3)
+                
                 hex_str = f"0x{addr:04X}"
-                print(f"  [✓] FOUND ACTIVE REGISTER: Dec {addr} ({hex_str}) | Raw Data: {val}")
+                print(f"  [✓] FOUND ACTIVE REGISTER: Dec {addr} ({hex_str}) | Current Raw Value: {val}")
                 valid_registers.append((addr, hex_str, val))
                 time.sleep(0.05)
             except minimalmodbus.IllegalRequestError:
@@ -216,153 +285,194 @@ def run_register_scanner(instrument):
             print(f"  -> Decimal: {reg[0]} | Hex: {reg[1]} | Current Raw Value: {reg[2]}")
     else:
         print("[X] No valid data addresses mapped inside selected scan limits.")
-    print("========================================================")
+    input("\nPress ENTER to continue...")
 
 
-def run_modbus_reader(port, hw_choice):
-    """Tool 3: Targeted Dixell XR77U Custom Modbus Poller [Family 44 Multi-Register Layout]"""
-    print("\n========================================================")
-    print("=== TOOL 3: TARGETED DIXELL XR77U LIVE INTERACTIVE POLLER ===")
-    print("========================================================")
-    
-    timeout_val = 0.4 if hw_choice == "1" else 0.6
-    slave_id = 1
+def run_universal_dashboard_node(cfg):
+    """Tool 4: Universal Interactive Dashboard Node (Read/Write any individual register)"""
+    print("\n=== TOOL 4: UNIVERSAL INTERACTIVE REGISTER DASHBOARD NODE ===")
+    instrument = build_instrument_context(cfg)
+    if not instrument: return
 
     try:
-        instrument = minimalmodbus.Instrument(port, slave_id)
-        instrument.serial.baudrate = 9600
-        instrument.serial.bytesize = 8
-        instrument.serial.parity = serial.PARITY_NONE
-        instrument.serial.stopbits = 1
-        instrument.serial.timeout = timeout_val
-        instrument.mode = minimalmodbus.MODE_RTU
-        print(f"[✓] Internal Modbus communication pipeline initialized on {port}.")
-    except Exception as e:
-        print(f"[X] Engine Hook Setup Failed: {e}")
-        input("\nPress ENTER to return to workspace menu...")
+        target_reg = int(input("Enter Target Decimal Register Address to monitor/control: ").strip())
+    except ValueError:
+        print("[!] Invalid address entry.")
         return
 
+    scale_in = input("Enter Decimal Scaling Multiplier (e.g., 10.0 for x0.1 resolution, or 1.0) [Default 1.0]: ").strip()
+    scale_factor = float(scale_in) if scale_in else 1.0
+
     while True:
-        print(f"\n--- Live Action Options (Locked to Slave Address 1) ---")
-        print(" 1) Stream Live Telemetry (Track Discovered Register Range)")
-        print(" 2) Modify Temperature Setpoint (Write Test Zone)")
-        print(" 3) Run Custom Address Map Scanner (Locate hidden variables)")
-        if hw_choice == "2":
-            print(" 4) XJ485CX Optocoupler Line Stability & Stress Diagnostic")
-        print(" Q) Return to Main Menu")
+        print(f"\n--- Controlling Dynamic Node Address: Dec {target_reg} (0x{target_reg:04X}) ---")
+        print(" 1) Stream Real-Time Value Queries")
+        print(" 2) Send Modbus Write Single Register Payload Command")
+        print(" B) Back to principal application loop")
         
-        test_choice = input("\nSelect workspace command: ").strip().upper()
-        
-        if test_choice == "Q":
+        choice = input("\nSelect node command action: ").strip().upper()
+        if choice == "B":
             break
-            
-        elif test_choice == "1":
-            print(f"\nStreaming all active Family 44 registers on {port}. Press Ctrl+C to halt stream...\n")
+        elif choice == "1":
+            print(f"\nStreaming queries on register {target_reg}. Press Ctrl+C to halt stream...\n")
+            try:
+                while True:
+                    raw_val = instrument.read_register(target_reg, number_of_decimals=0, signed=True)
+                    scaled_val = raw_val / scale_factor
+                    print(f"[{time.strftime('%H:%M:%S')}] Register {target_reg}: Raw={raw_val} | Mapped Scaled={scaled_val}")
+                    time.sleep(2.0)
+            except KeyboardInterrupt:
+                print("\nStreaming paused.")
+        elif choice == "2":
+            try:
+                raw_curr = instrument.read_register(target_reg, number_of_decimals=0, signed=True)
+                print(f"\nCurrent Raw Register Integer Value: {raw_curr}")
+                val_in = input("Enter new targeted raw integer value to write: ").strip()
+                if not val_in: continue
+                new_int_val = int(val_in)
+                
+                print(f"Transmitting Modbus Write packet to Register {target_reg}...")
+                instrument.write_register(target_reg, new_int_val, number_of_decimals=0, signed=True)
+                time.sleep(0.3)
+
+                verify = instrument.read_register(target_reg, number_of_decimals=0, signed=True)
+                if verify == new_int_val:
+                    print(f"[✓] SUCCESS: Mapped value committed and verified: {verify}")
+                else:
+                    print(f"[X] ERROR: Verification mismatch. Sent {new_int_val} but read back {verify}")
+            except Exception as e:
+                print(f"[X] Modbus Transaction Aborted: {e}")
+        input("\nPress ENTER to continue inside current register dashboard node...")
+
+
+def run_custom_xr77u_workspace(cfg):
+    """Tool 5: Specialized Dixell XR77U Custom OEM Profile (2C310000 / Map Code Ptb 3)"""
+    print("\n========================================================")
+    print("=== TOOL 5: SPECIALISED DIXELL XR77U PROFILE WORKSPACE ===")
+    print("========================================================")
+    print("⚠️  Warning: This workspace targets the hardcoded limits of the 2C310000 profile.")
+    print("    It automatically builds an independent connection profile forcing Address 1.")
+    
+    # Force alignment to verified profile parameters
+    instrument = build_instrument_context(cfg, target_slave=1)
+    if not instrument: return
+
+    # Mapped registers derived from your workbench validation sweeps
+    REG_ROOM_TEMP = 256   # 0x0100 - Live Room Probe (P1)
+    REG_SETPOINT  = 819   # 0x0333 - Mapped Temperature Setpoint (SEt)
+    REG_DIFF      = 770   # 0x0302 - Mapped Regulation Differential (Hy)
+
+    while True:
+        print(f"\n--- Mapped Telemetry Actions (Address: 1 | Speed: {cfg.baudrate} bps) ---")
+        print(" 1) Stream Live Telemetry Dashboard (P1 Room Temp, SEt, Hy)")
+        print(" 2) Modify Temperature Setpoint (Write New SEt Value to Reg 819)")
+        print(" B) Back to Main Menu")
+        
+        choice = input("\nSelect operational profile choice: ").strip().upper()
+        if choice == "B":
+            break
+        elif choice == "1":
+            print(f"\nStreaming verified XR77U telemetry dashboard. Press Ctrl+C to stop...\n")
             try:
                 while True:
                     try:
-                        # Query the exact active register nodes revealed by your scan
-                        r256 = instrument.read_register(256, number_of_decimals=1, signed=True)
-                        r260 = instrument.read_register(260, number_of_decimals=1, signed=True)
-                        r264 = instrument.read_register(264, number_of_decimals=1, signed=True)
+                        room_temp = instrument.read_register(REG_ROOM_TEMP, number_of_decimals=1, signed=True)
+                        setpoint  = instrument.read_register(REG_SETPOINT, number_of_decimals=1, signed=True)
+                        diff      = instrument.read_register(REG_DIFF, number_of_decimals=1, signed=False)
                         
-                        print(f"[{time.strftime('%H:%M:%S')}] Query Succeeded:")
-                        print(f"  -> Register 256 (0x0100):  {r256} °C")
-                        print(f"  -> Register 260 (0x0104):  {r260} °C")
-                        print(f"  -> Register 264 (0x0108):  {r264} °C")
-                        print("-" * 40)
+                        print(f"[{time.strftime('%H:%M:%S')}] XR77U Custom Profile Telemetry Frame:")
+                        print(f"  -> Room Probe Temp (P1):   {room_temp} °C")
+                        print(f"  -> Mapped Setpoint (SEt):  {setpoint} °C")
+                        print(f"  -> Mapped Differential (Hy): {diff} °C")
+                        print("-" * 45)
                     except Exception as e:
                         print(f"[{time.strftime('%H:%M:%S')}] [TIMEOUT/ERROR] Data drop: {e}")
                     time.sleep(2.0)
             except KeyboardInterrupt:
-                print("\nLive data stream terminated.")
-                
-        elif test_choice == "2":
-            print("\nExecuting targeted parameter override routine...")
+                print("\nStream paused.")
+        elif choice == "2":
             try:
-                print("Broadcasting Modbus Write single register test payload to register 6...")
-                val_input = input("Enter new targeted testing Setpoint value in °C (e.g. 4.0): ").strip()
-                if not val_input:
-                    continue
+                current_set = instrument.read_register(REG_SETPOINT, number_of_decimals=1, signed=True)
+                print(f"\nCurrent active controller memory Setpoint reads: {current_set} °C")
+                val_input = input("Enter new targeted Setpoint value in °C (e.g. 4.0): ").strip()
+                if not val_input: continue
                 new_val = float(val_input)
                 
-                instrument.write_register(6, new_val, number_of_decimals=1, signed=True)
-                print(f"[✓] SUCCESS: Command committed to register 6 memory layer.")
+                print("Broadcasting Modbus Write command to Setpoint Register 819...")
+                instrument.write_register(REG_SETPOINT, new_val, number_of_decimals=1, signed=True)
+                time.sleep(0.3)
+                
+                if instrument.read_register(REG_SETPOINT, number_of_decimals=1, signed=True) == new_val:
+                    print(f"[✓] SUCCESS: Mapped value successfully committed to EEPROM: {new_val} °C")
+                else:
+                    print("[X] ERROR: Verification check failed. Mismatch on memory readback.")
             except Exception as e:
                 print(f"[X] Modbus Write Transaction Aborted: {e}")
-                
-        elif test_choice == "3":
-            run_register_scanner(instrument)
-            
-        elif test_choice == "4" and hw_choice == "2":
-            print("\nTesting XJ485CX transceiver physical stability over 10 loops...")
-            success = 0
-            for i in range(1, 11):
-                try:
-                    instrument.read_register(256, number_of_decimals=0, signed=False)
-                    print(f"  [Frame {i:02d}/10] Echo Delivery: OK")
-                    success += 1
-                except Exception:
-                    print(f"  [Frame {i:02d}/10] Echo Delivery: TIMEOUT / DROPPED PACKET")
-                time.sleep(0.2)
-            print(f"\n[INTEGRITY RATING] Line Stability Score: {success * 10}%")
-        else:
-            print("[!] Command unavailable under current structural hardware selections.")
-            
-        input("\nPress ENTER to continue inside current test environment...")
+        input("\nPress ENTER to continue inside current profile environment...")
 
+# --- MAIN ENGINE ROUTER LOOPS ---
 
 def main():
+    cfg = ConfigWorkspace()
     print("=========================================================")
-    print("  CONTROLLER SERIAL DIAGNOSTIC & WORKSPACE SUITE v2.2 ")
+    print("  UNIVERSAL CONTROLLER MODBUS DIAGNOSTIC WORKSPACE v3.0  ")
     print("=========================================================")
     print("Initial hardware binding required before entering diagnostic loop.")
     
-    active_port = scan_and_select_port()
-    if not active_port:
-        print("\n[!] No communications interface bound. Application exiting.")
+    # Force dynamic configuration tracking on application boot
+    run_initialization_wizard(cfg)
+    if not cfg.port:
+        print("\n[!] Application setup aborted. Exiting suite.")
         sys.exit(0)
-        
-    hardware_type = select_hardware_topology()
-    hw_mode_string = "Direct 5V TTL" if hardware_type == "1" else "RS-485 (via XJ485CX)"
     
     while True:
-        print("\n" + "="*55)
-        print("            CONTROLLER ACTIVE DIAGNOSTIC MENUS            ")
-        print(f" Current Active Interface: {active_port} | Mode: {hw_mode_string}")
-        print("="*55)
-        print(" 1) Run Safety-Enhanced Jumper Loopback Test")
-        print(" 2) Run Modbus RTU Raw Byte Frame Sniffer")
-        print(" 3) Launch Custom XR77U Targeted Modbus Workspace Menu")
-        print(" 4) Switch Hardware Interface Configurations / Rescan Ports")
-        print(" 5) Exit Suite Workspace safely")
-        print("="*55)
+        parity_str = cfg.get_parity_string()
+        print("\n" + "="*60)
+        print("          UNIVERSAL SERIAL DIAGNOSTIC SYSTEM CONTROLS      ")
+        print(f" Active Port: {cfg.port} | Slave ID: {cfg.slave_id} | {cfg.baudrate} bps | Parity: {parity_str}")
+        print("="*60)
+        print(" 1) Run Safety-Enhanced Hardware Loopback Diagnostic Test")
+        print(" 2) Run Modbus RTU Raw Byte Frame Sniffer / Analyser")
+        print(" 3) Run Universal Dynamic Register Memory Scanner (FC3/FC4)")
+        print(" 4) Launch Universal Interactive Register Dashboard Node")
+        print(" 5) Launch Specialized Dixell XR77U Custom Profile Workspace")
+        print(" 6) Re-run Initialization Wizard (Switch Serial Hardware / Speeds)")
+        print(" 7) Close Application Suite safely")
+        print("="*60)
 
-        choice = input("Select workspace execution action (1-5): ").strip()
-        if choice == "1": 
-            run_hardware_test(active_port, hardware_type)
-        elif choice == "2": 
-            run_raw_sniffer(active_port)
-        elif choice == "3": 
-            run_modbus_reader(active_port, hardware_type)
+        choice = input("Select workspace execution action (1-7): ").strip()
+        if choice == "1":
+            run_hardware_test(cfg)
+        elif choice == "2":
+            run_raw_sniffer(cfg)
+        elif choice == "3":
+            run_universal_register_scanner(cfg)
         elif choice == "4":
-            print("\nRe-entering initialization wizard...")
-            active_port = scan_and_select_port()
-            if not active_port:
-                print("\n[!] Interface dropped. Application closing.")
-                break
-            hardware_type = select_hardware_topology()
-            hw_mode_string = "Direct 5V TTL" if hardware_type == "1" else "RS-485 (via XJ485CX)"
+            run_universal_dashboard_node(cfg)
         elif choice == "5":
-            print("\nClosing serial diagnostic workspaces. Goodbye.")
+            run_custom_xr77u_workspace(cfg)
+        elif choice == "6":
+            run_initialization_wizard(cfg)
+        elif choice == "7":
+            print("\nClosing workspace utilities safely. Goodbye.")
             sys.exit(0)
         else:
-            print("\n[!] Input entry invalid. Select an index value between 1 and 5.")
+            print("\n[!] Input entry invalid. Select an index value between 1 and 7.")
 
 
 if __name__ == "__main__":
-    try: 
+    try:
         main()
-    except KeyboardInterrupt: 
-        print("\nWorkspace broken by user execution command.")
+    except KeyboardInterrupt:
+        print("\nWorkspace broken by administrative shutdown execution command.")
         sys.exit(0)
+
+
+
+
+
+
+
+
+
+
+
