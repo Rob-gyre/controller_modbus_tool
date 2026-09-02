@@ -450,26 +450,36 @@ def run_custom_xr77u_workspace(cfg):
 
         elif choice == "3":
             print("\n=== AUTOMATED PARAMETER CAPTURE WIZARD (DIFF-HUNTER) ===")
-            print("Step 1: Reading baseline snapshot of memory range 768-860...")
+            print("Step 1: Reading baseline snapshot of memory range 768-845...")
             
             baseline = {}
-            try:
-                # Expanded range safely up to 860 to ensure we catch trailing variables
-                for addr in range(768, 861):
+            # We loop from 768 to 845 using a safe single-register isolation pass
+            for addr in range(768, 846):
+                try:
                     baseline[addr] = instrument.read_register(addr, number_of_decimals=0, signed=False)
-                print("[✓] Baseline state stored successfully.")
+                except Exception:
+                    # Silently skip unmapped gaps or empty slots in the firmware map
+                    continue
+            
+            if not baseline:
+                print("[X] ERROR: Baseline scan failed completely. Check serial connection lines.")
+                input("\nPress ENTER to continue...")
+                continue
                 
-                print("\n--- ACTION REQUIRED ON TEST BENCH ---")
-                param_name = input("Enter the label of the parameter you are about to change (e.g., MdF, dtE): ").strip().upper()
-                print(f"\n[!] Go to the controller keypad now.")
-                print(f"    1. Modify parameter [{param_name}] to your new target value.")
-                print(f"    2. Exit the Pr1/Pr2 menu completely until the home screen display returns.")
-                input("\n>>> Once the controller is back on its home display screen, press ENTER to hunt for changes...")
-                
-                print("\nStep 2: Scanning for delta modifications across the memory matrix...")
-                changes_found = 0
-                
-                for addr in range(768, 861):
+            print("[✓] Baseline state stored successfully (Gaps skipped safely).")
+            
+            print("\n--- ACTION REQUIRED ON TEST BENCH ---")
+            param_name = input("Enter the label of the parameter you are about to change (e.g., MdF, dtE): ").strip().upper()
+            print(f"\n[!] Go to the controller keypad now.")
+            print(f"    1. Modify parameter [{param_name}] to your new target value.")
+            print(f"    2. Exit the Pr1/Pr2 menu completely until the home screen display returns.")
+            input("\n>>> Once the controller is back on its home display screen, press ENTER to hunt for changes...")
+            
+            print("\nStep 2: Scanning for delta modifications across the memory matrix...")
+            changes_found = 0
+            
+            for addr in list(baseline.keys()):
+                try:
                     current_val = instrument.read_register(addr, number_of_decimals=0, signed=False)
                     if current_val != baseline[addr]:
                         hex_str = f"0x{addr:04X}"
@@ -478,15 +488,16 @@ def run_custom_xr77u_workspace(cfg):
                         print(f"  -> Previous Stored Value: {baseline[addr]}")
                         print(f"  -> New Keypad Input Value: {current_val}")
                         changes_found += 1
+                except Exception:
+                    continue
+            
+            if changes_found == 0:
+                print("\n[X] SCAN COMPLETE: No changes detected. Suggestions:")
+                print("    -> Make sure you exited the installer menu completely so it isn't reporting 'Busy'.")
+                print("    -> Confirm the parameter actually saved its value on the physical board panel.")
                 
-                if changes_found == 0:
-                    print("\n[X] SCAN COMPLETE: No changes detected. Suggestions:")
-                    print("    -> Make sure you exited the installer menu completely so it isn't reporting 'Busy'.")
-                    print("    -> Confirm the parameter actually saved its value on the physical board panel.")
-                    
-            except Exception as e:
-                print(f"[X] Wizard automation tracking sequence dropped: {e}")
             input("\nPress ENTER to return to your workspace options menu...")
+
 
 
 
