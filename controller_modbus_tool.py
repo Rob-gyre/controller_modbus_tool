@@ -226,10 +226,10 @@ def run_modbus_reader(port, hw_choice):
             try:
                 while True:
                     try:
-                        room_temp = instrument.read_register(REG_ROOM_TEMP, numberOfDecimals=1, signed=True)
-                        evap_temp = instrument.read_register(REG_EVAP_TEMP, numberOfDecimals=1, signed=True)
-                        setpoint  = instrument.read_register(REG_SETPOINT, numberOfDecimals=1, signed=True)
-                        diff      = instrument.read_register(REG_DIFF, numberOfDecimals=1, signed=False)
+                        room_temp = instrument.read_register(REG_ROOM_TEMP, number_of_decimals=1, signed=True)
+                        evap_temp = instrument.read_register(REG_EVAP_TEMP, number_of_decimals=1, signed=True)
+                        setpoint  = instrument.read_register(REG_SETPOINT, number_of_decimals=1, signed=True)
+                        diff      = instrument.read_register(REG_DIFF, number_of_decimals=1, signed=False)
                         
                         print(f"[{time.strftime('%H:%M:%S')}] Query Succeeded:")
                         print(f"  -> Room Probe Temp (P1):   {room_temp} °C")
@@ -246,7 +246,7 @@ def run_modbus_reader(port, hw_choice):
         elif test_choice == "2":
             print("\nExecuting targeted parameter override routine...")
             try:
-                current_set = instrument.read_register(REG_SETPOINT, numberOfDecimals=1, signed=True)
+                current_set = instrument.read_register(REG_SETPOINT, number_of_decimals=1, signed=True)
                 print(f"Current controller memory Setpoint reads: {current_set} °C")
                 val_input = input("Enter new targeted Setpoint value in °C (e.g. -18.5): ").strip()
                 if not val_input:
@@ -254,10 +254,10 @@ def run_modbus_reader(port, hw_choice):
                 new_val = float(val_input)
                 
                 print("Transmitting Modbus Write single register command packet...")
-                instrument.write_register(REG_SETPOINT, new_val, numberOfDecimals=1, signed=True)
+                instrument.write_register(REG_SETPOINT, new_val, number_of_decimals=1, signed=True)
                 
                 time.sleep(0.3)  # Processing window ensuring EEPROM write allocation satisfies
-                if instrument.read_register(REG_SETPOINT, numberOfDecimals=1, signed=True) == new_val:
+                if instrument.read_register(REG_SETPOINT, number_of_decimals=1, signed=True) == new_val:
                     print(f"[✓] SUCCESS: Parameters successfully committed and verified: {new_val} °C")
                 else:
                     print("[X] ERROR: Verification check failed. Value mismatch on readback.")
@@ -270,7 +270,7 @@ def run_modbus_reader(port, hw_choice):
             success = 0
             for i in range(1, 11):
                 try:
-                    instrument.read_register(REG_ROOM_TEMP, numberOfDecimals=1, signed=True)
+                    instrument.read_register(REG_ROOM_TEMP, number_of_decimals=1, signed=True)
                     print(f"  [Frame {i:02d}/10] Echo Delivery: OK")
                     success += 1
                 except Exception:
