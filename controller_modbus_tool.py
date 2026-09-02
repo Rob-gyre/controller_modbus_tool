@@ -390,7 +390,7 @@ def run_custom_xr77u_workspace(cfg):
                         # alarm_status = "⚠️ CRITICAL ALERT" if (status_word & 0x0010) else "NORMAL"
                         
                         print(f"[{time.strftime('%H:%M:%S')}] XR77U Custom Profile Telemetry Frame:")
-                        print(f"  -> System Alarm Status:    {alarm_status}")
+                        print(f"  -> System Alarm Status:     UNKNOWN (Mapping Test)")
                         print(f"  -> Room Probe Temp (P1):   {room_temp} °C")
                         print(f"  -> Mapped Setpoint (SEt):  {setpoint} °C")
                         print(f"  -> Mapped Differential (Hy): {diff} °C")
