@@ -76,6 +76,18 @@ XR_ENUMS={
 "onF":{"0":"Key disabled","1":"On/off enabled","2":"Energy-saving enabled"},
 "bEn":{"0":"Buzzer disabled","1":"Buzzer enabled"}}
 
+# Numeric formats stated by the Universal-R manual.
+# name: (scale operation, scale factor, signed)
+XR_FORMATS={
+"dtS":("divide",10,True),"dAd":("divide",1,False),"Fdt":("divide",1,False),
+"Fnd":("divide",1,False),"Fon":("divide",1,False),"FoF":("divide",1,False),
+"o3":("divide",10,True),"dLy":("divide",1,False),"Con":("divide",1,False),
+"CoF":("divide",1,False),"did":("divide",1,False),"di2":("divide",1,False),
+"dot":("divide",1,False),"HES":("divide",10,True),"Ptb":("divide",1,False),"rEL":("divide",10,False),
+"Prd":("divide",10,True),"dP2":("divide",10,True),"dP3":("divide",10,True)}
+
+XR_READ_ONLY={"Ptb","rEL","Prd","dP2","dP3"}
+
 CAREL={"Pb1":("S11",10,True,"Probe 1","C"),"Pb2":("S21",10,True,"Probe 2","C"),"Pb3":("S31",10,True,"Probe 3","C"),
 "St":("S81",10,True,"Setpoint","C"),"rd":("S91",10,True,"Differential","C"),"LSE":("S:1",10,True,"Minimum setpoint","C"),
 "HSE":("S;1",10,True,"Maximum setpoint","C"),"/C1":("S51",10,True,"Probe 1 calibration","C"),"/C2":("S61",10,True,"Probe 2 calibration","C"),
@@ -104,8 +116,17 @@ def s16(v): return v-65536 if v>=32768 else v
 def decode_value(raw,item):
     if raw is None:return None
     if item.get("enum") and str(raw) in item["enum"]:return item["enum"][str(raw)]
+    if item.get("documented_choices") and str(raw) in item["documented_choices"]:return item["documented_choices"][str(raw)]
     number=s16(raw) if item.get("signed") else raw; factor=float(item.get("scale",1))
     return number*factor if item.get("scale_operation")=="multiply" else number/factor
+
+def display_value(raw,item):
+    if raw is None:return "N/A"
+    choices=dict(item.get("documented_choices") or {});choices.update(item.get("enum") or {})
+    meaning=choices.get(str(raw))
+    if meaning is not None:return f"{raw} ({meaning})"
+    decoded=decode_value(raw,item)
+    return f"{decoded:g}" if isinstance(decoded,(int,float)) else str(decoded)
 def encode_value(value,item):
     factor=float(item.get("scale",1))
     return int(round(value/factor if item.get("scale_operation")=="multiply" else value*factor))
@@ -134,6 +155,10 @@ def seed():
         for n,(d,u,g,cur,lo,hi) in XR_UNMAPPED.items(): ps[n]={"description":d,"units":u,"group":g,"default_reference":cur,"minimum":lo,"maximum":hi,"verification":"unmapped","high_risk":n=="tC"}
         for n,choices in XR_ENUMS.items():
             if n in ps: ps[n]["documented_choices"]=choices
+        for n,(operation,factor,signed) in XR_FORMATS.items():
+            if n in ps:ps[n].update({"documented_scale_operation":operation,"documented_scale":factor,"documented_signed":signed})
+        for n in XR_READ_ONLY:
+            if n in ps:ps[n]["read_only"]=True
         save({"name":"XR77U","protocol":"modbus_rtu","model":"XR77U / 2C310000","firmware":"5.9","connection":{"port":"/dev/ttyUSB0","slave":1,"baudrate":9600,"parity":"N","stopbits":1,"timeout":.6},"parameters":ps})
     if not (PROFILE_DIR/"carel_pjezc0p000.json").exists():
         ps={n:{"token":t,"scale":sc,"signed":sg,"description":d,"units":u,"verification":"live_confirmed","access":"read_write"} for n,(t,sc,sg,d,u) in CAREL.items()}
@@ -161,6 +186,13 @@ def get_profiles(protocol=None):
                 for n,choices in XR_ENUMS.items():
                     if n in items and items[n].get("documented_choices")!=choices:
                         items[n]["documented_choices"]=choices;changed=True
+                for n,(operation,factor,signed) in XR_FORMATS.items():
+                    if n in items:
+                        documented={"documented_scale_operation":operation,"documented_scale":factor,"documented_signed":signed}
+                        for key,value in documented.items():
+                            if items[n].get(key)!=value:items[n][key]=value;changed=True
+                for n in XR_READ_ONLY:
+                    if n in items and not items[n].get("read_only"):items[n]["read_only"]=True;changed=True
                 for item in items.values():
                     if "current" in item and item.get("verification") not in ("user_verified","write_verified"):
                         item.pop("current",None);changed=True
@@ -248,13 +280,13 @@ def read_profile(session):
     if session["protocol"]=="carel_pjez":
         d=PJEZ(session["connection"]["port"],session["connection"]["unit"]); values=d.dump();d.close()
         for n,i in p["parameters"].items():
-            raw=values.get(i.get("token")); decoded=decode_value(raw,i); val="N/A" if decoded is None else str(decoded);print(f"{n:<8}{val:>10} {i.get('units',''):<5} {i.get('token','')}")
+            raw=values.get(i.get("token"));val=display_value(raw,i);print(f"{n:<8}{val:>32} {i.get('units',''):<5} {i.get('token','')}")
         return
     d=inst(session["connection"])
     for n,i in p["parameters"].items():
         if "address" not in i:continue
-        raw=readloc(d,i.get("register_type","holding"),i["address"]); decoded=decode_value(raw,i); val="N/A" if decoded is None else str(decoded)
-        print(f"{n:<8}{val:>10} {i.get('units',''):<5} {i.get('register_type','holding')[0].upper()}:{i['address']} {i.get('verification','')}")
+        raw=readloc(d,i.get("register_type","holding"),i["address"]);val=display_value(raw,i)
+        print(f"{n:<8}{val:>32} {i.get('units',''):<5} {i.get('register_type','holding')[0].upper()}:{i['address']} {i.get('verification','')}")
 
 def possible(values,target,item):
     out=[]; preferred_signed=(item.get("minimum") is not None and isinstance(item.get("minimum"),(int,float)) and item["minimum"]<0)
@@ -353,16 +385,37 @@ def verify(session):
     save(p)
 
 def write_modbus(session):
-    p=session["profile"]; mapped=[(n,i) for n,i in p["parameters"].items() if "address" in i and i.get("register_type")=="holding"]
-    for x,(n,i) in enumerate(mapped,1):print(f" {x}) {n} H:{i['address']}")
-    try:n,i=mapped[int(ask("Select",1))-1];value=float(ask("Value to write"))
+    p=session["profile"]; mapped=[(n,i) for n,i in p["parameters"].items() if "address" in i and i.get("register_type")=="holding" and not i.get("read_only") and i.get("access")!="read_only"]
+    if not mapped:print("No mapped writable holding-register candidates are available.");return
+    print("CONTROLLED WRITE VERIFICATION")
+    print("Only mapped holding registers are listed. Fixed/read-only values are excluded.")
+    for x,(n,i) in enumerate(mapped,1):
+        choices=dict(i.get("documented_choices") or {});choices.update(i.get("enum") or {})
+        suffix=" | "+", ".join(f"{code}={meaning}" for code,meaning in choices.items()) if choices else ""
+        print(f" {x}) {n} H:{i['address']}{suffix}")
+    try:n,i=mapped[int(ask("Select parameter to write",1))-1]
     except (ValueError,IndexError):return
-    raw=encode_value(value,i);print(f"WARNING: leaves controller changed. {n}={value:g}, H:{i['address']}, raw={raw}")
-    if ask("Type WRITE to confirm")!="WRITE":return
+    choices=dict(i.get("documented_choices") or {});choices.update(i.get("enum") or {})
+    if choices:
+        print("Enter the numeric code shown beside the required meaning.")
+        try:value=float(ask("New setting code"))
+        except ValueError:print("A numeric setting code is required.");return
+        if str(int(value)) not in choices and not yesno(f"Code {value:g} is not documented. Continue anyway",False):return
+    else:
+        try:value=float(ask(f"New displayed value in {i.get('units','controller units')}"))
+        except ValueError:print("A numeric value is required.");return
+    raw=encode_value(value,i);meaning=choices.get(str(int(value))) if choices else None
+    description=f" ({meaning})" if meaning else ""
+    print(f"Proposed write: {n}={value:g}{description}, holding {i['address']}, encoded raw={raw}.")
+    print("The controller will be left at this value after a successful test.")
+    if not yesno("Send this value to the controller now",True):
+        print("Write cancelled; nothing was sent.");return
     d=inst(session["connection"])
-    try:d.write_register(i["address"],raw,0,functioncode=6,signed=i.get("signed",False));time.sleep(.3);print(f"Read-back raw: {readloc(d,'holding',i['address'])}")
+    try:
+        d.write_register(i["address"],raw,0,functioncode=6,signed=i.get("signed",False));time.sleep(.3);readback=readloc(d,"holding",i["address"]);print(f"Read-back: raw {readback}, displayed interpretation {display_value(readback,i)}")
     except Exception as e:print(f"Write failed: {e}");return
-    if yesno(f"Does controller show {value:g}"):i["verification"]="write_verified";i["access"]="read_write";i["current"]=value;save(p)
+    expected=meaning or f"{value:g} {i.get('units','')}".strip()
+    if yesno(f"Does the physical controller now show {expected}"):i["verification"]="write_verified";i["access"]="read_write";i["current"]=value;save(p)
 
 def chex(text):
     r=0
@@ -451,7 +504,8 @@ def write_carel(session):
     try:n,i=items[int(ask("Select",1))-1];value=float(ask("Value to write"));password=int(ask("Password","0x16"),0)
     except (ValueError,IndexError):return
     raw=int(round(value*float(i.get("scale",1))))&65535;print(f"WARNING: leaves controller changed. {n}={value:g}, token {i['token']}, raw=0x{raw:04X}")
-    if ask("Type WRITE to confirm")!="WRITE":return
+    if not yesno("Send this value to the controller now",True):
+        print("Write cancelled; nothing was sent.");return
     d=PJEZ(session["connection"]["port"],session["connection"]["unit"]);ok=d.write_token(i["token"],raw,password);d.close();print("Write ACK received." if ok else "Write failed or no ACK.")
 
 def ensure_discovery(session):
@@ -486,17 +540,51 @@ def changed_locations(before,after,boolean_only=False):
             changes.append((kind,address,old_raw,new_raw))
     return changes
 
-def choose_changed_location(changes):
+def choose_changed_location(changes,name):
     if not changes:return None
     if len(changes)==1:
-        c=changes[0];print(f"One changed location: {c[0]} {c[1]}, raw {c[2]} -> {c[3]}")
-        return c if yesno("Use this location",True) else None
-    print("Changed locations:")
+        c=changes[0]
+        print(f"Only one unassigned location changed: {c[0]} {c[1]}, raw {c[2]} -> {c[3]}")
+        print(f"This is strong evidence that {c[0]} {c[1]} is the location for {name}.")
+        return c if yesno(f"Assign {c[0]} {c[1]} to {name} and continue",True) else None
+    print(f"{len(changes)} unassigned locations changed while {name} was changed.")
+    print("Select the location most likely to belong to this parameter. Choose R if the test was not clean.")
     for index,c in enumerate(changes,1):print(f" {index}) {c[0]} {c[1]} raw {c[2]} -> {c[3]}")
-    choice=ask("Select the parameter location, or R to reject","R")
+    choice=ask(f"Location for {name}; enter its number or R to reject","R")
     if choice.lower()=="r":return None
     try:return changes[int(choice)-1]
     except (ValueError,IndexError):print("Invalid selection.");return None
+
+def map_fixed_parameter(session,name,item,working):
+    print(f"\nSelected: {name} - {item.get('description','')}")
+    print("This is a fixed/read-only value, so the tool will not ask you to change it.")
+    try:shown=float(ask("Enter the exact value currently shown on the controller"))
+    except ValueError:print("A numeric displayed value is required. Nothing saved.");return False
+    operation=item.get("documented_scale_operation","divide");factor=float(item.get("documented_scale",1));signed=item.get("documented_signed",False)
+    matches=[]
+    for kind,locations in working.items():
+        for address,raw in locations.items():
+            number=s16(raw) if signed else raw;decoded=number*factor if operation=="multiply" else number/factor
+            if abs(decoded-shown)<1e-7:matches.append((kind,address,raw,decoded))
+    if not matches:
+        print(f"No unassigned location decodes to {shown:g} using the documented format ({operation} by {factor}, signed={signed}).")
+        print("Nothing was saved. Run a fresh discovery if the snapshot may be out of date.");return False
+    if len(matches)==1:
+        kind,address,raw,_=matches[0]
+        print(f"One matching unassigned location: {kind} {address}, raw {raw} -> {shown:g} {item.get('units','')}")
+        if not yesno(f"Assign {kind} {address} to {name}",True):return False
+    else:
+        print(f"{len(matches)} unassigned locations currently decode to {shown:g}. A fixed value cannot distinguish them automatically.")
+        for index,(k,a,r,d) in enumerate(matches,1):print(f" {index}) {k} {a}, raw {r} -> {d:g} {item.get('units','')}")
+        choice=ask(f"Location for {name}; enter its number or R to reject","R")
+        if choice.lower()=="r":return False
+        try:kind,address,raw,_=matches[int(choice)-1]
+        except (ValueError,IndexError):print("Invalid selection.");return False
+    item.update({"register_type":kind,"address":address,"scale":factor,"scale_operation":operation,"signed":signed,"access":"read_only","verification":"value_matched_read_only","last_user_verified":shown})
+    session["profile"].setdefault("parameters",{})[name]=item;working.get(kind,{}).pop(address,None);persist_working_snapshot(session,working)
+    print(f"Saved fixed/read-only mapping: {name} -> {kind} {address}.")
+    print(f"That location has been removed from the working snapshot. Unassigned locations remaining: {sum(len(x) for x in working.values())}")
+    return True
 
 def map_snapshot_parameter(session,name,item,working,mode=None):
     if item.get("high_risk"):
@@ -507,43 +595,56 @@ def map_snapshot_parameter(session,name,item,working,mode=None):
     if documented:
         print("Documented settings:")
         for code,meaning in documented.items():print(f" {code}) {meaning}")
-    print(f"Baseline snapshot ready; monitoring {sum(len(x) for x in working.values())} unassigned locations.")
-    pause(f"Change only {name} to another safe setting, exit the controller menu, then press ENTER")
+    print(f"The saved baseline contains {sum(len(x) for x in working.values())} unassigned readable locations.")
+    print("Nothing is being written by this tool. It will compare the baseline with the controller after your keypad change.")
+    pause(f"On the controller, change only {name} to another safe setting, save/exit its menu, then press ENTER here")
     after=refresh(session,working);changes=changed_locations(working,after,mode=="status")
-    selected=choose_changed_location(changes)
-    if not selected:print("No mapping saved.");return False
+    selected=choose_changed_location(changes,name)
+    if not selected:
+        print("No mapping was saved. The unassigned snapshot has not been reduced.");return False
     kind,address,old_raw,new_raw=selected
     if documented or mode=="enum":
         if documented:
             enum=dict(documented);new_label=enum.get(str(new_raw),f"raw {new_raw}")
-            print(f"New raw value {new_raw}: {new_label}")
+            print(f"The manual/profile identifies raw {new_raw} as: {new_label}")
+            print("No scale or displayed-value entry is needed for this documented choice.")
         else:
-            new_label=ask(f"Text shown for raw {new_raw}");enum={str(new_raw):new_label}
+            print(f"The changed register now contains raw {new_raw}, but this undocumented profile does not yet know its meaning.")
+            new_label=ask(f"Enter the exact text now shown on the controller for raw {new_raw}");enum={str(new_raw):new_label}
         item.update({"register_type":kind,"address":address,"scale":1,"scale_operation":"divide","signed":False,"enum":enum,"access":"read","verification":"change_verified"})
     elif mode=="status":
-        state=ask("Physical state after the change ON/OFF","ON").upper();is_on=state=="ON"
+        print("Tell the profile whether the physical condition is now ON or OFF so both raw states can be labelled correctly.")
+        state=ask("Physical state now: ON or OFF","ON").upper();is_on=state=="ON"
         item.update({"register_type":kind,"address":address,"scale":1,"scale_operation":"divide","signed":False,"units":"bool","access":"read","verification":"change_verified","on_value":new_raw if is_on else old_raw,"off_value":old_raw if is_on else new_raw})
     else:
-        try:new_display=float(ask("New value shown on controller"))
-        except ValueError:print("A numeric displayed value is required. Nothing saved.");return False
-        interpretations=quick_candidates({kind:{address:new_raw}},new_display,item)
-        if len(interpretations)==1:
-            _,_,_,_,factor,signed,operation=interpretations[0]
-            print(f"Interpretation: {operation} by {factor}, signed={signed}")
+        if "documented_scale" in item:
+            operation=item.get("documented_scale_operation","divide");factor=item["documented_scale"];signed=item.get("documented_signed",False)
+            preview=s16(new_raw) if signed else new_raw;preview=preview*factor if operation=="multiply" else preview/factor
+            print(f"The manual/profile already defines the format: {operation} by {factor}, signed={signed}.")
+            print(f"Raw {new_raw} therefore decodes to {preview:g} {item.get('units','')}; no value entry is required.")
         else:
-            if interpretations:
-                for index,c in enumerate(interpretations,1):print(f" {index}) {c[6]} by {c[4]}, signed={c[5]}")
-                choice=ask("Select interpretation, or R to reject","R")
-                if choice.lower()=="r":return False
-                try:_,_,_,_,factor,signed,operation=interpretations[int(choice)-1]
-                except (ValueError,IndexError):return False
+            print("This parameter has no documented scale. The displayed value is needed once to determine how the raw register is encoded.")
+            try:new_display=float(ask("Enter the exact new numeric value shown on the controller"))
+            except ValueError:print("A numeric displayed value is required. Nothing saved.");return False
+            interpretations=quick_candidates({kind:{address:new_raw}},new_display,item)
+            if len(interpretations)==1:
+                _,_,_,_,factor,signed,operation=interpretations[0]
+                print(f"Interpretation: {operation} by {factor}, signed={signed}")
             else:
-                operation=ask("Scale operation divide/multiply","divide").lower();factor=float(ask("Scale factor",1));signed=yesno("Signed 16-bit",item.get("minimum",0)<0 if isinstance(item.get("minimum"),(int,float)) else False)
+                if interpretations:
+                    for index,c in enumerate(interpretations,1):print(f" {index}) {c[6]} by {c[4]}, signed={c[5]}")
+                    choice=ask("Select interpretation, or R to reject","R")
+                    if choice.lower()=="r":return False
+                    try:_,_,_,_,factor,signed,operation=interpretations[int(choice)-1]
+                    except (ValueError,IndexError):return False
+                else:
+                    operation=ask("Scale operation divide/multiply","divide").lower();factor=float(ask("Scale factor",1));signed=yesno("Signed 16-bit",item.get("minimum",0)<0 if isinstance(item.get("minimum"),(int,float)) else False)
         item.update({"register_type":kind,"address":address,"scale":factor,"scale_operation":operation,"signed":signed,"access":"read","verification":"change_verified"})
     session["profile"].setdefault("parameters",{})[name]=item
     working.clear();working.update(after);working.get(kind,{}).pop(address,None)
     persist_working_snapshot(session,working)
-    print(f"Saved {name} -> {kind} {address}. Unassigned locations remaining: {sum(len(x) for x in working.values())}")
+    print(f"Saved mapping: {name} -> {kind} {address}.")
+    print(f"That location has been removed from the working snapshot. Unassigned locations remaining: {sum(len(x) for x in working.values())}")
     return True
 
 def quick_candidates(values,target,item):
@@ -724,19 +825,24 @@ def mapping_menu(session):
     while True:
         print("\nMAP PARAMETERS AND STATUS")
         print("1) Map existing profile parameter\n2) Add and map a new numeric value\n3) Add and map a Boolean/status")
-        print("4) Add and map a text/enumerated value\n5) Enter a known location manually\n6) Review mappings from this session\nB) Back")
+        print("4) Add and map a text/enumerated value\n5) Add and map a fixed/read-only value")
+        print("6) Enter a known location manually\n7) Review mappings from this session\nB) Back")
         choice=ask("Select",1)
-        if choice=="6":print("\n".join(mapped) if mapped else "Nothing mapped in this session.");continue
-        if choice=="5":manual_mapping(session);continue
+        if choice=="7":print("\n".join(mapped) if mapped else "Nothing mapped in this session.");continue
+        if choice=="6":manual_mapping(session);continue
         if choice=="1":
             available=[(n,i) for n,i in session["profile"]["parameters"].items() if "address" not in i and "token" not in i]
             for x,(n,i) in enumerate(available,1):
                 risk=" [HIGH RISK]" if i.get("high_risk") else ""
-                print(f" {x}) {n:<5} {i.get('description','')}{risk}")
+                fixed=" [FIXED/READ-ONLY]" if i.get("read_only") else ""
+                print(f" {x}) {n:<5} {i.get('description','')}{risk}{fixed}")
             try:name,item=available[int(ask("Select parameter",1))-1]
             except (ValueError,IndexError):continue
-            mode="enum" if item.get("documented_choices") or isinstance(item.get("default_reference"),str) else "numeric"
-            if map_snapshot_parameter(session,name,item,working,mode):mapped.append(name)
+            if item.get("read_only"):
+                if map_fixed_parameter(session,name,item,working):mapped.append(name)
+            else:
+                mode="enum" if item.get("documented_choices") or isinstance(item.get("default_reference"),str) else "numeric"
+                if map_snapshot_parameter(session,name,item,working,mode):mapped.append(name)
         elif choice=="2":
             name=ask("Name");item={"description":ask("Description",name),"units":ask("Units",""),
                 "minimum":None,"maximum":None,"verification":"unmapped"}
@@ -747,6 +853,11 @@ def mapping_menu(session):
         elif choice=="4":
             name=ask("Parameter name");item={"description":ask("Description",name),"verification":"unmapped"}
             if map_snapshot_parameter(session,name,item,working,"enum"):mapped.append(name)
+        elif choice=="5":
+            name=ask("Fixed/read-only value name");item={"description":ask("Description",name),"units":ask("Units",""),"verification":"unmapped","read_only":True}
+            operation=ask("Known scale operation divide/multiply","divide").lower();factor=float(ask("Known scale factor",1));signed=yesno("Signed 16-bit",False)
+            item.update({"documented_scale_operation":operation,"documented_scale":factor,"documented_signed":signed})
+            if map_fixed_parameter(session,name,item,working):mapped.append(name)
         else:print("Invalid selection.")
 
 def read_current(session,item,carel_values=None):

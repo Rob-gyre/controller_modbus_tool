@@ -85,6 +85,13 @@ the refreshed remaining snapshot is saved. Reopening the profile resumes from
 that reduced pool. The original timestamped discovery is retained unchanged as
 an audit record. Profiles are saved as UTF-8 JSON in `profiles/`.
 
+Fixed/read-only values use a separate no-change workflow. Enter the value shown
+on the controller and the tool matches it against the unassigned snapshot using
+the documented or user-entered format. This is used for the Universal-R map
+code, software release and three probe displays. A unique match is offered
+automatically; multiple identical matches remain a user choice because a fixed
+value provides no second change with which to distinguish them.
+
 Candidate selection defaults to `R` (reject) rather than forcing the first
 candidate. Only exact before/after matches are presented as candidates.
 
