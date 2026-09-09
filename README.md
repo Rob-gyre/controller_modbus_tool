@@ -8,10 +8,15 @@ locations, mapping controller parameters and carefully verifying writes.
 - Modbus RTU with an initial XR77U / 2C310000 firmware 5.9 profile.
 - CAREL PJEZ TTL/key-port protocol using the proven `F1` table-dump sequence.
 
-The XR77U profile starts with the 24 addresses recorded in
-`Universal_R_Map.xlsx`. They are labelled `mapped_unverified` until checked on
-the live controller. The CAREL profile contains the mappings proven during the
-PJEZ investigation.
+The XR77U profile starts with the 24 parameter addresses recorded in
+`Universal_R_Map.xlsx`, plus the previously established live probe registers
+Pb1=256, Pb2=257 and Pb3=258. They are labelled `mapped_unverified` until checked
+on the live controller. The remaining workbook parameters are included as an
+unmapped work queue. The CAREL profile contains mappings proven during the PJEZ
+investigation.
+
+Connection settings are entered once at startup and reused by every menu action.
+Use `Change connection` only when moving to another controller or adapter.
 
 ## Safety
 
@@ -45,11 +50,23 @@ The XR77U adapter currently appears as `/dev/ttyUSB0`. A stable path from
 4. Once a known address responds, choose `Read mapped values`.
 5. Use read-only discovery and mapping before controlled write verification.
 
+Modbus discovery can scan all standard read areas without profile restrictions:
+
+- Coils, function 01.
+- Discrete inputs, function 02.
+- Holding registers, function 03.
+- Input registers, function 04.
+
 ## Mapping
 
-The wizard captures readable locations, asks the user to change one controller
-parameter, reads the same locations again and ranks changes. It suggests the
-signed interpretation and scale, then asks:
+The mapping menu remains open so several parameters can be mapped in one session.
+The discovery result and active connection are reused rather than entered again.
+
+Quick mapping first compares the parameter's current displayed value with all
+readable locations and common signed/scaled interpretations. One unique match can
+be saved as `value_matched` without changing the controller. If several values
+match, the wizard asks for a controlled keypad change and compares two snapshots.
+It suggests the signed interpretation and scale, then asks:
 
 ```text
 Confirm/edit scale [10]:
@@ -57,6 +74,11 @@ Confirm/edit scale [10]:
 
 Press Enter to accept the suggestion or type another scale. Profiles are saved
 as UTF-8 JSON in `profiles/`.
+
+Verification is a separate menu. It can verify one parameter or compare all
+numeric mappings with current values saved in the profile. Evidence states are
+`mapped_unverified`, `value_matched`, `value_verified`, `change_verified` and
+`write_verified`.
 
 ## Upload the existing repository to GitHub
 
