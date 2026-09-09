@@ -446,13 +446,52 @@ def save_numeric_candidate(session,name,item,candidate,status):
                  "signed":signed,"access":"read","verification":status})
     session["profile"].setdefault("parameters",{})[name]=item;save(session["profile"])
 
+def map_enum_point(session,name,item,values):
+    if item.get("high_risk"):
+        print("WARNING: This setting changes the controller application map.")
+        if not yesno("Include this high-risk parameter",False):return False
+    original=ask("Controller current text",item.get("default_reference",""))
+    print("Text/enum values cannot be matched from one snapshot because the raw code is not known yet.")
+    before=current_snapshot(session,values)
+    pause(f"Change {name} to a different safe option, exit the controller menu, then press ENTER")
+    changed_text=ask("New text shown on controller")
+    after=current_snapshot(session,before);changes=[]
+    for kind,locations in before.items():
+        for address,braw in locations.items():
+            araw=after.get(kind,{}).get(address)
+            if araw is not None and araw!=braw:changes.append((kind,address,braw,araw))
+    if not changes:print("No changed locations found. Nothing was saved.");return False
+    print("\nChanged locations:")
+    for x,c in enumerate(changes,1):print(f" {x}) {c[0]} {c[1]} raw {c[2]} -> {c[3]}")
+    selected=ask("Select candidate, or R to reject","R")
+    if selected.lower()=="r":return False
+    try:kind,address,old_raw,new_raw=changes[int(selected)-1]
+    except (ValueError,IndexError):print("Invalid selection.");return False
+    pause(f"Restore {name} to {original}, exit the controller menu, then press ENTER")
+    restored=current_snapshot(session,{kind:{address:new_raw}}).get(kind,{}).get(address)
+    if restored!=old_raw:
+        print(f"Reverse confirmation failed: expected raw {old_raw}, read {restored}. Nothing saved.");return False
+    item.update({"register_type":kind,"address":address,"scale":1,"scale_operation":"divide","signed":False,
+                 "enum":{str(old_raw):original,str(new_raw):changed_text},"access":"read",
+                 "verification":"change_verified"})
+    session["profile"].setdefault("parameters",{})[name]=item;save(session["profile"])
+    print(f"Saved enum: raw {old_raw}={original}, raw {new_raw}={changed_text}")
+    return True
+
 def map_numeric_point(session,name,item,values):
     if item.get("high_risk"):
         print("WARNING: This setting changes the controller application map.")
         if not yesno("Include this high-risk parameter",False):return False
     reference=item.get("default_reference")
+    if isinstance(reference,str) and reference:
+        try:float(reference)
+        except ValueError:
+            print("Detected a text/enumerated parameter. Switching to enum mapping.")
+            return map_enum_point(session,name,item,values)
     try:old=float(ask("Controller current value",reference))
-    except (ValueError,TypeError):print("A numeric value is required.");return False
+    except (ValueError,TypeError):
+        print("Detected a text/enumerated parameter. Switching to enum mapping.")
+        return map_enum_point(session,name,item,values)
     before=current_snapshot(session,values);matches=quick_candidates(before,old,item)
     if len(matches)==1:
         _,kind,address,raw,factor,signed,operation=matches[0]
