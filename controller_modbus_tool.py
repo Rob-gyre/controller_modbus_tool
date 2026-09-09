@@ -87,6 +87,7 @@ XR_FORMATS={
 "Prd":("divide",10,True),"dP2":("divide",10,True),"dP3":("divide",10,True)}
 
 XR_READ_ONLY={"Ptb","rEL","Prd","dP2","dP3"}
+XR_MAP_WITHOUT_CHANGE={"tC"}
 
 CAREL={"Pb1":("S11",10,True,"Probe 1","C"),"Pb2":("S21",10,True,"Probe 2","C"),"Pb3":("S31",10,True,"Probe 3","C"),
 "St":("S81",10,True,"Setpoint","C"),"rd":("S91",10,True,"Differential","C"),"LSE":("S:1",10,True,"Minimum setpoint","C"),
@@ -159,6 +160,8 @@ def seed():
             if n in ps:ps[n].update({"documented_scale_operation":operation,"documented_scale":factor,"documented_signed":signed})
         for n in XR_READ_ONLY:
             if n in ps:ps[n]["read_only"]=True
+        for n in XR_MAP_WITHOUT_CHANGE:
+            if n in ps:ps[n]["map_without_change"]=True
         save({"name":"XR77U","protocol":"modbus_rtu","model":"XR77U / 2C310000","firmware":"5.9","connection":{"port":"/dev/ttyUSB0","slave":1,"baudrate":9600,"parity":"N","stopbits":1,"timeout":.6},"parameters":ps})
     if not (PROFILE_DIR/"carel_pjezc0p000.json").exists():
         ps={n:{"token":t,"scale":sc,"signed":sg,"description":d,"units":u,"verification":"live_confirmed","access":"read_write"} for n,(t,sc,sg,d,u) in CAREL.items()}
@@ -193,6 +196,8 @@ def get_profiles(protocol=None):
                             if items[n].get(key)!=value:items[n][key]=value;changed=True
                 for n in XR_READ_ONLY:
                     if n in items and not items[n].get("read_only"):items[n]["read_only"]=True;changed=True
+                for n in XR_MAP_WITHOUT_CHANGE:
+                    if n in items and not items[n].get("map_without_change"):items[n]["map_without_change"]=True;changed=True
                 for item in items.values():
                     if "current" in item and item.get("verification") not in ("user_verified","write_verified"):
                         item.pop("current",None);changed=True
@@ -385,7 +390,7 @@ def verify(session):
     save(p)
 
 def write_modbus(session):
-    p=session["profile"]; mapped=[(n,i) for n,i in p["parameters"].items() if "address" in i and i.get("register_type")=="holding" and not i.get("read_only") and i.get("access")!="read_only"]
+    p=session["profile"]; mapped=[(n,i) for n,i in p["parameters"].items() if "address" in i and i.get("register_type")=="holding" and not i.get("read_only") and not i.get("map_without_change") and i.get("access")!="read_only"]
     if not mapped:print("No mapped writable holding-register candidates are available.");return
     print("CONTROLLED WRITE VERIFICATION")
     print("Only mapped holding registers are listed. Fixed/read-only values are excluded.")
@@ -557,7 +562,8 @@ def choose_changed_location(changes,name):
 
 def map_fixed_parameter(session,name,item,working):
     print(f"\nSelected: {name} - {item.get('description','')}")
-    print("This is a fixed/read-only value, so the tool will not ask you to change it.")
+    if item.get("read_only"):print("This is a fixed/read-only value, so the tool will not ask you to change it.")
+    else:print("Changing this parameter could reconfigure the controller, so it will be mapped without changing it.")
     try:shown=float(ask("Enter the exact value currently shown on the controller"))
     except ValueError:print("A numeric displayed value is required. Nothing saved.");return False
     operation=item.get("documented_scale_operation","divide");factor=float(item.get("documented_scale",1));signed=item.get("documented_signed",False)
@@ -580,9 +586,11 @@ def map_fixed_parameter(session,name,item,working):
         if choice.lower()=="r":return False
         try:kind,address,raw,_=matches[int(choice)-1]
         except (ValueError,IndexError):print("Invalid selection.");return False
-    item.update({"register_type":kind,"address":address,"scale":factor,"scale_operation":operation,"signed":signed,"access":"read_only","verification":"value_matched_read_only","last_user_verified":shown})
+    access="read_only" if item.get("read_only") else "read"
+    verification="value_matched_read_only" if item.get("read_only") else "value_matched_no_change"
+    item.update({"register_type":kind,"address":address,"scale":factor,"scale_operation":operation,"signed":signed,"access":access,"verification":verification,"last_user_verified":shown})
     session["profile"].setdefault("parameters",{})[name]=item;working.get(kind,{}).pop(address,None);persist_working_snapshot(session,working)
-    print(f"Saved fixed/read-only mapping: {name} -> {kind} {address}.")
+    print(f"Saved no-change mapping: {name} -> {kind} {address}.")
     print(f"That location has been removed from the working snapshot. Unassigned locations remaining: {sum(len(x) for x in working.values())}")
     return True
 
@@ -834,11 +842,11 @@ def mapping_menu(session):
             available=[(n,i) for n,i in session["profile"]["parameters"].items() if "address" not in i and "token" not in i]
             for x,(n,i) in enumerate(available,1):
                 risk=" [HIGH RISK]" if i.get("high_risk") else ""
-                fixed=" [FIXED/READ-ONLY]" if i.get("read_only") else ""
+                fixed=" [FIXED/READ-ONLY]" if i.get("read_only") else " [MAP WITHOUT CHANGE]" if i.get("map_without_change") else ""
                 print(f" {x}) {n:<5} {i.get('description','')}{risk}{fixed}")
             try:name,item=available[int(ask("Select parameter",1))-1]
             except (ValueError,IndexError):continue
-            if item.get("read_only"):
+            if item.get("read_only") or item.get("map_without_change"):
                 if map_fixed_parameter(session,name,item,working):mapped.append(name)
             else:
                 mode="enum" if item.get("documented_choices") or isinstance(item.get("default_reference"),str) else "numeric"
