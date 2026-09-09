@@ -9,6 +9,7 @@ except ImportError as exc:
     raise SystemExit(1)
 
 ROOT=Path(__file__).resolve().parent; PROFILE_DIR=ROOT/"profiles"; EXPORT_DIR=ROOT/"exports"; DISCOVERY_DIR=ROOT/"discoveries"
+TOOL_VERSION="4.2.0";PROFILE_SCHEMA_VERSION=2
 STX,ETX,ENQ,ACK,NUL=2,3,5,6,0
 KINDS={"holding":3,"input":4,"coil":1,"discrete":2}
 
@@ -133,7 +134,12 @@ def encode_value(value,item):
     return int(round(value/factor if item.get("scale_operation")=="multiply" else value*factor))
 def pname(n): return "".join(c.lower() if c.isalnum() else "_" for c in n).strip("_")
 def save(p):
-    PROFILE_DIR.mkdir(exist_ok=True); path=PROFILE_DIR/f"{pname(p['name'])}.json"; path.write_text(json.dumps(p,indent=2),encoding="utf-8"); print(f"Saved {path}")
+    PROFILE_DIR.mkdir(exist_ok=True);p["schema_version"]=PROFILE_SCHEMA_VERSION;p["last_saved_by_tool"]=TOOL_VERSION
+    path=PROFILE_DIR/f"{pname(p['name'])}.json";temporary=path.with_suffix(".json.tmp");backup=path.with_suffix(".backup.json")
+    payload=json.dumps(p,indent=2,ensure_ascii=False);temporary.write_text(payload,encoding="utf-8")
+    json.loads(temporary.read_text(encoding="utf-8"))
+    if path.exists():shutil.copy2(path,backup)
+    temporary.replace(path);print(f"Saved {path}")
 
 def create_profile(protocol):
     print("\nCREATE A BLANK CONTROLLER PROFILE")
@@ -170,10 +176,18 @@ def seed():
 def get_profiles(protocol=None):
     seed(); out=[]
     for f in sorted(PROFILE_DIR.glob("*.json")):
+        if f.name.endswith(".backup.json"):continue
         try:
-            p=json.loads(f.read_text(encoding="utf-8"))
+            try:p=json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                backup=f.with_suffix(".backup.json")
+                if not backup.exists():raise
+                p=json.loads(backup.read_text(encoding="utf-8"));print(f"Recovered {f.name} from {backup.name}")
+                recovery=f.with_suffix(".json.recovery");recovery.write_text(json.dumps(p,indent=2,ensure_ascii=False),encoding="utf-8");recovery.replace(f)
+            changed=False
+            if p.get("schema_version")!=PROFILE_SCHEMA_VERSION:p["schema_version"]=PROFILE_SCHEMA_VERSION;changed=True
             if p.get("name")=="XR77U":
-                changed=False; items=p.setdefault("parameters",{})
+                items=p.setdefault("parameters",{})
                 for n,(a,sc,sg,d,u,g,cur,lo,hi) in XR_MAPPED.items():
                     source={"address":a,"register_type":"holding","scale":sc,"scale_operation":"divide","signed":sg,"description":d,"units":u,"group":g,"default_reference":cur,"minimum":lo,"maximum":hi}
                     if n not in items:items[n]={**source,"access":"read","verification":"mapped_unverified"};changed=True
@@ -201,7 +215,7 @@ def get_profiles(protocol=None):
                 for item in items.values():
                     if "current" in item and item.get("verification") not in ("user_verified","write_verified"):
                         item.pop("current",None);changed=True
-                if changed:save(p)
+            if changed:save(p)
             if protocol is None or p.get("protocol")==protocol: out.append(p)
         except Exception as e: print(f"Could not load {f.name}: {e}")
     return out
@@ -214,6 +228,10 @@ def choose_profile(protocol=None):
     if choice.lower()=="n":return create_profile(protocol)
     try:return ps[int(choice)-1]
     except (ValueError,IndexError):return None
+
+def connection_fingerprint(protocol,connection):
+    keys=("port","slave","baudrate","parity","stopbits") if protocol=="modbus_rtu" else ("port","unit","baudrate","parity","stopbits")
+    return {key:connection.get(key) for key in keys}
 
 def configure(previous=None):
     print("\nCONNECTION SETUP (used until you choose Change connection)")
@@ -228,7 +246,10 @@ def configure(previous=None):
     if latest:
         try:
             candidate=(ROOT/latest).resolve()
-            if ROOT.resolve() in candidate.parents:discovery=json.loads(candidate.read_text(encoding="utf-8"))
+            if ROOT.resolve() in candidate.parents:
+                loaded=json.loads(candidate.read_text(encoding="utf-8"));expected=connection_fingerprint(proto,conn)
+                if loaded.get("connection")!=expected:print("Saved snapshot belongs to different connection settings; run a new discovery.")
+                else:discovery=loaded
         except Exception as exc:print(f"Could not load previous discovery: {exc}")
     if discovery:print(f"Loaded saved discovery: {latest}")
     return {"protocol":proto,"profile":profile,"connection":conn,"discovery":discovery}
@@ -254,16 +275,20 @@ def scan(session,kinds=None,ask_range=True,quiet=False):
         ch=ask("Scan selection",1); kinds={"1":list(KINDS),"2":["holding"],"3":["input"],"4":["coil"],"5":["discrete"]}.get(ch,list(KINDS))
     start=int(ask("Starting address",0)) if ask_range else 0; end=int(ask("Ending address",999)) if ask_range else 999; d=inst(session["connection"]); result={k:{} for k in kinds}
     print("Read-only discovery. No values will be written.")
-    for kind in kinds:
-        address=start;next_report=start+127
-        while address<=end:
-            count=min(32,end-address+1);before=len(result[kind]);scan_block(d,kind,address,count,result[kind])
-            if not quiet:
-                for found_address in sorted(a for a in result[kind] if address<=a<address+count):print(f" FOUND {kind} {found_address} raw={result[kind][found_address]}")
-            address+=count
-            if address>next_report:print(f" {kind}: through {min(address-1,end)}, readable={len(result[kind])}");next_report+=128
-        print(f"{kind}: {len(result[kind])} readable")
-    session["discovery"]={"profile":session["profile"]["name"],"captured":time.strftime("%Y-%m-%d %H:%M:%S"),"start":start,"end":end,"values":result}
+    try:
+        for kind in kinds:
+            address=start;next_report=start+127
+            while address<=end:
+                count=min(32,end-address+1);before=len(result[kind]);scan_block(d,kind,address,count,result[kind])
+                if not quiet:
+                    for found_address in sorted(a for a in result[kind] if address<=a<address+count):print(f" FOUND {kind} {found_address} raw={result[kind][found_address]}")
+                address+=count
+                if address>next_report:print(f" {kind}: through {min(address-1,end)}, readable={len(result[kind])}");next_report+=128
+            print(f"{kind}: {len(result[kind])} readable")
+    finally:
+        try:d.serial.close()
+        except Exception:pass
+    session["discovery"]={"profile":session["profile"]["name"],"connection":connection_fingerprint(session["protocol"],session["connection"]),"captured":time.strftime("%Y-%m-%d %H:%M:%S"),"start":start,"end":end,"values":result}
     DISCOVERY_DIR.mkdir(exist_ok=True);stamp=time.strftime("%Y%m%d_%H%M%S");discovery_path=DISCOVERY_DIR/f"{pname(session['profile']['name'])}_{stamp}.json"
     discovery_path.write_text(json.dumps(session["discovery"],indent=2),encoding="utf-8")
     session["profile"]["latest_discovery_file"]=str(discovery_path.relative_to(ROOT));session["profile"].pop("working_snapshot_file",None);save(session["profile"])
@@ -274,11 +299,16 @@ def test(session):
         try:d=PJEZ(session["connection"]["port"],session["connection"]["unit"]); r=d.identity();d.close();print(f"SUCCESS: CAREL identity {r.hex(' ')}" if r.startswith(bytes([STX])) else "No CAREL response.")
         except Exception as e:print(f"Connection failed: {e}")
         return
-    d=inst(session["connection"]); candidates=[(i.get("register_type","holding"),i["address"]) for i in session["profile"]["parameters"].values() if "address" in i]
-    for kind,address in candidates:
-        v=readloc(d,kind,address)
-        if v is not None:print(f"SUCCESS: {kind} {address} raw={v}");return
-    print("No valid response. Check port, address, settings, A/B polarity and port ownership.")
+    d=inst(session["connection"])
+    try:
+        candidates=[(i.get("register_type","holding"),i["address"]) for i in session["profile"]["parameters"].values() if "address" in i]
+        for kind,address in candidates:
+            v=readloc(d,kind,address)
+            if v is not None:print(f"SUCCESS: {kind} {address} raw={v}");return
+        print("No valid response. Check port, address, settings, A/B polarity and port ownership.")
+    finally:
+        try:d.serial.close()
+        except Exception:pass
 
 def read_profile(session):
     p=session["profile"]
@@ -288,10 +318,14 @@ def read_profile(session):
             raw=values.get(i.get("token"));val=display_value(raw,i);print(f"{n:<8}{val:>32} {i.get('units',''):<5} {i.get('token','')}")
         return
     d=inst(session["connection"])
-    for n,i in p["parameters"].items():
-        if "address" not in i:continue
-        raw=readloc(d,i.get("register_type","holding"),i["address"]);val=display_value(raw,i)
-        print(f"{n:<8}{val:>32} {i.get('units',''):<5} {i.get('register_type','holding')[0].upper()}:{i['address']} {i.get('verification','')}")
+    try:
+        for n,i in p["parameters"].items():
+            if "address" not in i:continue
+            raw=readloc(d,i.get("register_type","holding"),i["address"]);val=display_value(raw,i)
+            print(f"{n:<8}{val:>32} {i.get('units',''):<5} {i.get('register_type','holding')[0].upper()}:{i['address']} {i.get('verification','')}")
+    finally:
+        try:d.serial.close()
+        except Exception:pass
 
 def possible(values,target,item):
     out=[]; preferred_signed=(item.get("minimum") is not None and isinstance(item.get("minimum"),(int,float)) and item["minimum"]<0)
@@ -315,12 +349,18 @@ def delta_candidates(before,after,old,new,item):
     return sorted(out)
 
 def refresh(session,template):
-    d=inst(session["connection"]);out={}
-    for kind,locations in template.items():
-        out[kind]={}
-        for address in locations:
-            value=readloc(d,kind,int(address))
-            if value is not None:out[kind][int(address)]=value
+    d=inst(session["connection"]);out={kind:{int(address):value for address,value in locations.items()} for kind,locations in template.items()};failed=[]
+    try:
+        for kind,locations in template.items():
+            for address in locations:
+                value=readloc(d,kind,int(address))
+                if value is not None:out[kind][int(address)]=value
+                else:failed.append((kind,int(address)))
+    finally:
+        try:d.serial.close()
+        except Exception:pass
+    session["last_read_failures"]=failed
+    if failed:print(f"Warning: {len(failed)} locations did not respond; their previous snapshot values were retained.")
     return out
 def choose_unmapped(p):
     items=[(n,i) for n,i in p["parameters"].items() if "address" not in i and "token" not in i]
@@ -400,6 +440,13 @@ def write_modbus(session):
         print(f" {x}) {n} H:{i['address']}{suffix}")
     try:n,i=mapped[int(ask("Select parameter to write",1))-1]
     except (ValueError,IndexError):return
+    current_device=inst(session["connection"])
+    try:current_raw=readloc(current_device,"holding",i["address"])
+    finally:
+        try:current_device.serial.close()
+        except Exception:pass
+    print(f"Current controller value: raw {current_raw}, decoded {display_value(current_raw,i)} {i.get('units','')}")
+    if current_raw is None:print("Current value could not be read; write cancelled.");return
     choices=dict(i.get("documented_choices") or {});choices.update(i.get("enum") or {})
     if choices:
         print("Enter the numeric code shown beside the required meaning.")
@@ -519,8 +566,15 @@ def map_carel_session(session):
 def write_carel(session):
     p=session["profile"];items=[(n,i) for n,i in p["parameters"].items() if "token" in i]
     for x,(n,i) in enumerate(items,1):print(f" {x}) {n} token {i['token']}")
-    try:n,i=items[int(ask("Select",1))-1];value=float(ask("Value to write"));password=int(ask("Password","0x16"),0)
+    try:n,i=items[int(ask("Select",1))-1]
     except (ValueError,IndexError):return
+    current=None;reader=PJEZ(session["connection"]["port"],session["connection"]["unit"])
+    try:current=reader.dump().get(i["token"])
+    finally:reader.close()
+    print(f"Current controller value: raw {('0x%04X'%current) if current is not None else 'unavailable'}, decoded {decode_value(current,i)} {i.get('units','')}")
+    if current is None:print("Current value could not be read; write cancelled.");return
+    try:value=float(ask(f"New displayed value in {i.get('units','controller units')}"));password=int(ask("Password","0x16"),0)
+    except ValueError:return
     raw=int(round(value*float(i.get("scale",1))))&65535;print(f"WARNING: leaves controller changed. {n}={value:g}, token {i['token']}, raw=0x{raw:04X}")
     if not yesno("Send this value to the controller now",True):
         print("Write cancelled; nothing was sent.");return
@@ -546,7 +600,7 @@ def current_snapshot(session,template):
 
 def persist_working_snapshot(session,working):
     DISCOVERY_DIR.mkdir(exist_ok=True);path=DISCOVERY_DIR/f"{pname(session['profile']['name'])}_working.json"
-    payload={"profile":session["profile"]["name"],"captured":time.strftime("%Y-%m-%d %H:%M:%S"),"working":True,"values":working}
+    payload={"profile":session["profile"]["name"],"connection":connection_fingerprint(session["protocol"],session["connection"]),"captured":time.strftime("%Y-%m-%d %H:%M:%S"),"working":True,"values":working}
     path.write_text(json.dumps(payload,indent=2),encoding="utf-8")
     session["discovery"]=payload;session["profile"]["working_snapshot_file"]=str(path.relative_to(ROOT));save(session["profile"])
 
@@ -894,7 +948,11 @@ def mapping_menu(session):
 def read_current(session,item,carel_values=None):
     if session["protocol"]=="carel_pjez":
         return carel_values.get(item.get("token")) if carel_values else None
-    return readloc(inst(session["connection"]),item.get("register_type","holding"),item["address"])
+    d=inst(session["connection"])
+    try:return readloc(d,item.get("register_type","holding"),item["address"])
+    finally:
+        try:d.serial.close()
+        except Exception:pass
 
 def verify_menu(session):
     mapped=[(n,i) for n,i in session["profile"]["parameters"].items() if "address" in i or "token" in i]
@@ -976,6 +1034,34 @@ def export_profile(session):
     print("\nEXPORT COMPLETE")
     print(f"JSON profile: {json_path}\nCSV map:      {csv_path}\nReadable map: {md_path}")
 
+def profile_summary(profile):
+    items=list(profile.get("parameters",{}).values());mapped=[i for i in items if "address" in i or "token" in i]
+    counts={}
+    for item in mapped:counts[item.get("verification","unknown")]=counts.get(item.get("verification","unknown"),0)+1
+    print(f"Parameters: {len(items)} | Mapped: {len(mapped)} | Unmapped: {len(items)-len(mapped)}")
+    print("Verification: "+(", ".join(f"{k}={v}" for k,v in sorted(counts.items())) if counts else "none"))
+
+def diagnostics(session):
+    p=session["profile"];issues=[];seen={}
+    for name,item in p.get("parameters",{}).items():
+        if "address" in item:
+            key=(item.get("register_type","holding"),int(item["address"]));seen.setdefault(key,[]).append(name)
+            if item.get("register_type") not in KINDS:issues.append(f"{name}: unknown register type {item.get('register_type')}")
+            if not isinstance(item.get("scale",1),(int,float)) or item.get("scale",1)<=0:issues.append(f"{name}: invalid scale")
+            if item.get("read_only") and item.get("access")=="read_write":issues.append(f"{name}: read-only marked writable")
+        choices=item.get("enum") or item.get("documented_choices")
+        if choices and any(v in (None,"") for v in choices.values()):issues.append(f"{name}: enum code has no meaning")
+    for key,names in seen.items():
+        if len(names)>1:issues.append(f"{key[0]} {key[1]} assigned to: {', '.join(names)}")
+    values=(session.get("discovery") or {}).get("values",{})
+    if values:
+        for key,names in seen.items():
+            if key[0] in values and key[1] not in {int(a) for a in values[key[0]]}:issues.extend(f"{n}: mapped location is absent from current discovery" for n in names)
+    print("\nPROFILE DIAGNOSTICS")
+    if issues:
+        for issue in issues:print(f"WARNING: {issue}")
+    else:print("No consistency problems found.")
+
 def raw_monitor(session):
     c=session["connection"];print("Read-only byte monitor. Another Modbus master must create traffic. Ctrl+C stops.")
     try:
@@ -998,6 +1084,7 @@ def main():
     if not session:return 1
     while True:
         print("\n"+"="*64+f"\nACTIVE: {active(session)}\nPROFILE: {session['profile']['name']}\n"+"="*64)
+        profile_summary(session["profile"])
         print("1) Test connection\n2) Read mapped values\n3) Discover readable locations\n4) Map parameters")
         print("5) Verify mapped parameters\n6) Controlled write verification\n7) View profile\n8) Change connection\n9) Diagnostics\n10) Export profile/map\n0) Exit")
         try:
@@ -1011,9 +1098,10 @@ def main():
             elif ch=="7":print(json.dumps(session["profile"],indent=2))
             elif ch=="8":session=configure(session) or session
             elif ch=="9":
-                print("1) List serial devices\n2) Raw byte monitor\nB) Back");diag=ask("Select",1)
+                print("1) List serial devices\n2) Raw byte monitor\n3) Profile consistency check\nB) Back");diag=ask("Select",1)
                 if diag=="1":ports()
                 elif diag=="2":raw_monitor(session)
+                elif diag=="3":diagnostics(session)
             elif ch=="10":export_profile(session)
             elif ch=="0":return 0
         except BackToMenu:
