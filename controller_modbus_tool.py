@@ -414,7 +414,7 @@ def verify(session):
     if session["protocol"]!="modbus_rtu":print("CAREL verification will use its next live dump implementation.");return
     d=inst(session["connection"]); targets=mapped
     if ch=="1":
-        for x,(n,i) in enumerate(mapped,1):print(f" {x}) {n}")
+        for x,(n,i) in enumerate(mapped,1):print(f" {x}) {n} - {i.get('description','')}")
         try:targets=[mapped[int(ask("Select",1))-1]]
         except (ValueError,IndexError):return
     for n,i in targets:
@@ -437,7 +437,7 @@ def write_modbus(session):
     for x,(n,i) in enumerate(mapped,1):
         choices=dict(i.get("documented_choices") or {});choices.update(i.get("enum") or {})
         suffix=" | "+", ".join(f"{code}={meaning}" for code,meaning in choices.items()) if choices else ""
-        print(f" {x}) {n} H:{i['address']}{suffix}")
+        print(f" {x}) {n} - {i.get('description','')} | H:{i['address']}{suffix}")
     try:n,i=mapped[int(ask("Select parameter to write",1))-1]
     except (ValueError,IndexError):return
     current_device=inst(session["connection"])
@@ -486,7 +486,7 @@ def edit_mapped_location(session):
     p=session["profile"];mapped=[(n,i) for n,i in p.get("parameters",{}).items() if "address" in i or "token" in i]
     if not mapped:print("No mapped parameters to edit.");return
     print("EDIT MAPPED LOCATION")
-    for index,(name,item) in enumerate(mapped,1):print(f" {index}) {name} - {item.get('token') or (item.get('register_type','holding')+' '+str(item.get('address')))}")
+    for index,(name,item) in enumerate(mapped,1):print(f" {index}) {name} - {item.get('description','')} | {item.get('token') or (item.get('register_type','holding')+' '+str(item.get('address')))}")
     try:name,item=mapped[int(ask("Select mapped parameter",1))-1]
     except (ValueError,IndexError):return
     old_location=item.get("token") or f"{item.get('register_type','holding')} {item.get('address')}"
@@ -993,7 +993,7 @@ def verify_menu(session):
         for n,i in mapped:print(f"{n:<10}{i.get('verification','unknown')}")
         return
     if choice=="1":
-        for x,(n,i) in enumerate(mapped,1):print(f" {x}) {n}")
+        for x,(n,i) in enumerate(mapped,1):print(f" {x}) {n} - {i.get('description','')}")
         try:mapped=[mapped[int(ask("Select",1))-1]]
         except (ValueError,IndexError):return
     carel_values=None
