@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Controller Serial Mapping Tool v4.1 - Modbus RTU and CAREL PJEZ."""
-import json, sys, time
+import csv, json, shutil, sys, time
 from pathlib import Path
 try:
     import serial, serial.tools.list_ports, minimalmodbus
@@ -8,7 +8,7 @@ except ImportError as exc:
     print(f"Missing dependency: {exc}. Run: pip install -r requirements.txt")
     raise SystemExit(1)
 
-ROOT=Path(__file__).resolve().parent; PROFILE_DIR=ROOT/"profiles"
+ROOT=Path(__file__).resolve().parent; PROFILE_DIR=ROOT/"profiles"; EXPORT_DIR=ROOT/"exports"; DISCOVERY_DIR=ROOT/"discoveries"
 STX,ETX,ENQ,ACK,NUL=2,3,5,6,0
 KINDS={"holding":3,"input":4,"coil":1,"discrete":2}
 
@@ -113,6 +113,19 @@ def pname(n): return "".join(c.lower() if c.isalnum() else "_" for c in n).strip
 def save(p):
     PROFILE_DIR.mkdir(exist_ok=True); path=PROFILE_DIR/f"{pname(p['name'])}.json"; path.write_text(json.dumps(p,indent=2),encoding="utf-8"); print(f"Saved {path}")
 
+def create_profile(protocol):
+    print("\nCREATE A BLANK CONTROLLER PROFILE")
+    name=ask("Profile name")
+    if not name.strip(): print("A profile name is required.");return None
+    path=PROFILE_DIR/f"{pname(name)}.json"
+    if path.exists() and not yesno(f"Profile {name} already exists. Replace it",False):return None
+    profile={"name":name.strip(),"protocol":protocol,"model":ask("Controller model (optional)",""),
+             "firmware":ask("Firmware/version (optional)",""),"parameters":{},
+             "created":time.strftime("%Y-%m-%d %H:%M:%S")}
+    if protocol=="modbus_rtu":profile["connection"]={"port":"/dev/ttyUSB0","slave":1,"baudrate":9600,"parity":"N","stopbits":1,"timeout":.6}
+    else:profile["connection"]={"port":"/dev/ttyACM0","unit":1,"baudrate":19200,"parity":"N","stopbits":2}
+    save(profile);return profile
+
 def seed():
     PROFILE_DIR.mkdir(exist_ok=True)
     if not (PROFILE_DIR/"xr77u.json").exists():
@@ -158,8 +171,11 @@ def get_profiles(protocol=None):
 def choose_profile(protocol=None):
     ps=get_profiles(protocol)
     for i,p in enumerate(ps,1): print(f" {i}) {p['name']} ({p['protocol']})")
+    print(" N) Create a new blank profile")
     print(" B) Back")
-    try:return ps[int(ask("Select profile",1))-1]
+    choice=ask("Select profile",1)
+    if choice.lower()=="n":return create_profile(protocol)
+    try:return ps[int(choice)-1]
     except (ValueError,IndexError):return None
 
 def configure(previous=None):
@@ -202,7 +218,11 @@ def scan(session,kinds=None,ask_range=True,quiet=False):
             address+=count
             if address>next_report:print(f" {kind}: through {min(address-1,end)}, readable={len(result[kind])}");next_report+=128
         print(f"{kind}: {len(result[kind])} readable")
-    session["discovery"]={"start":start,"end":end,"values":result}; (ROOT/"last_discovery.json").write_text(json.dumps(session["discovery"],indent=2),encoding="utf-8"); return result
+    session["discovery"]={"profile":session["profile"]["name"],"captured":time.strftime("%Y-%m-%d %H:%M:%S"),"start":start,"end":end,"values":result}
+    DISCOVERY_DIR.mkdir(exist_ok=True);stamp=time.strftime("%Y%m%d_%H%M%S");discovery_path=DISCOVERY_DIR/f"{pname(session['profile']['name'])}_{stamp}.json"
+    discovery_path.write_text(json.dumps(session["discovery"],indent=2),encoding="utf-8")
+    session["profile"]["latest_discovery_file"]=str(discovery_path.relative_to(ROOT));save(session["profile"])
+    print(f"Discovery saved to {discovery_path}");return result
 
 def test(session):
     if session["protocol"]=="carel_pjez":
@@ -486,32 +506,38 @@ def map_enum_point(session,name,item,values):
         print("Documented settings:")
         for code,meaning in choices.items(): print(f"  {code}) {meaning}")
         print("The controller may show a short label (for example dEF) instead of the number.")
-    original=ask("Setting currently shown on controller",item.get("default_reference",""))
-    print("Text/enum values cannot be matched from one snapshot because the raw code is not known yet.")
+    original=ask("Current setting code or displayed text",item.get("default_reference",""))
+    original_label=choices.get(str(original),str(original))
+    if choices and str(original) in choices:print(f"Current setting: {original} = {original_label}")
+    print("One safe setting change lets the tool identify the register.")
     before=current_snapshot(session,values)
     pause(f"Change {name} to a different safe option, exit the controller menu, then press ENTER")
-    changed_text=ask("New text shown on controller")
+    changed_text=ask("New setting code or displayed text")
+    changed_label=choices.get(str(changed_text),str(changed_text))
+    if choices and str(changed_text) in choices:print(f"New setting: {changed_text} = {changed_label}")
     after=current_snapshot(session,before);changes=[]
     for kind,locations in before.items():
         for address,braw in locations.items():
             araw=after.get(kind,{}).get(address)
             if araw is not None and araw!=braw:changes.append((kind,address,braw,araw))
     if not changes:print("No changed locations found. Nothing was saved.");return False
-    print("\nChanged locations:")
-    for x,c in enumerate(changes,1):print(f" {x}) {c[0]} {c[1]} raw {c[2]} -> {c[3]}")
-    selected=ask("Select candidate, or R to reject","R")
-    if selected.lower()=="r":return False
-    try:kind,address,old_raw,new_raw=changes[int(selected)-1]
-    except (ValueError,IndexError):print("Invalid selection.");return False
-    pause(f"Restore {name} to {original}, exit the controller menu, then press ENTER")
-    restored=current_snapshot(session,{kind:{address:new_raw}}).get(kind,{}).get(address)
-    if restored!=old_raw:
-        print(f"Reverse confirmation failed: expected raw {old_raw}, read {restored}. Nothing saved.");return False
+    if len(changes)==1:
+        kind,address,old_raw,new_raw=changes[0]
+        print(f"One changed location found: {kind} {address}, raw {old_raw} -> {new_raw}")
+        if not yesno("Save this mapping",True):return False
+    else:
+        print("\nChanged locations:")
+        for x,c in enumerate(changes,1):print(f" {x}) {c[0]} {c[1]} raw {c[2]} -> {c[3]}")
+        selected=ask("Select candidate, or R to reject","R")
+        if selected.lower()=="r":return False
+        try:kind,address,old_raw,new_raw=changes[int(selected)-1]
+        except (ValueError,IndexError):print("Invalid selection.");return False
     item.update({"register_type":kind,"address":address,"scale":1,"scale_operation":"divide","signed":False,
-                 "enum":{str(old_raw):original,str(new_raw):changed_text},"access":"read",
+                 "enum":{str(old_raw):original_label,str(new_raw):changed_label},"access":"read",
                  "verification":"change_verified"})
     session["profile"].setdefault("parameters",{})[name]=item;save(session["profile"])
-    print(f"Saved enum: raw {old_raw}={original}, raw {new_raw}={changed_text}")
+    print(f"Saved {name}: {kind} {address}; raw {old_raw}={original_label}, raw {new_raw}={changed_label}")
+    print(f"Controller was left at {changed_label}; restore it manually only if required.")
     return True
 
 def map_numeric_point(session,name,item,values):
@@ -562,19 +588,24 @@ def map_status(session,values):
             a=after.get(kind,{}).get(address)
             if a is not None and a!=b and b in (0,1) and a in (0,1):changes.append((kind,address,b,a))
     if not changes:print("No Boolean changes found.");return False
-    for x,c in enumerate(changes,1):print(f" {x}) {c[0]} {c[1]}: {c[2]} -> {c[3]}")
-    selected=ask("Select candidate, or R to reject","R")
-    if selected.lower()=="r":return False
-    try:kind,address,b,a=changes[int(selected)-1]
-    except (ValueError,IndexError):return False
-    pause(f"Return {name} to {initial}, then press ENTER")
-    final=current_snapshot(session,{kind:{address:a}}).get(kind,{}).get(address)
-    if final!=b:
-        print(f"Reverse confirmation failed: expected {b}, read {final}. Nothing saved.");return False
+    if len(changes)==1:
+        kind,address,b,a=changes[0];print(f"One changed location found: {kind} {address}, {b} -> {a}")
+        if not yesno("Save this mapping",True):return False
+    else:
+        for x,c in enumerate(changes,1):print(f" {x}) {c[0]} {c[1]}: {c[2]} -> {c[3]}")
+        selected=ask("Select candidate, or R to reject","R")
+        if selected.lower()=="r":return False
+        try:kind,address,b,a=changes[int(selected)-1]
+        except (ValueError,IndexError):return False
     item={"register_type":kind,"address":address,"scale":1,"scale_operation":"divide","signed":False,
           "description":description,"units":"bool","access":"read","verification":"change_verified",
           "on_value":a if initial=="OFF" else b,"off_value":b if initial=="OFF" else a}
     session["profile"].setdefault("parameters",{})[name]=item;save(session["profile"]);return True
+
+def map_new_enum(session,values):
+    name=ask("Parameter name");description=ask("Description",name)
+    item={"description":description,"units":"","verification":"unmapped"}
+    return map_enum_point(session,name,item,values)
 
 def manual_mapping(session):
     name=ask("Name");description=ask("Description",name)
@@ -596,10 +627,10 @@ def mapping_menu(session):
     while True:
         print("\nMAP PARAMETERS AND STATUS")
         print("1) Map existing profile parameter\n2) Add and map a new numeric value\n3) Add and map a Boolean/status")
-        print("4) Enter a known location manually\n5) Review mappings from this session\nB) Back")
+        print("4) Add and map a text/enumerated value\n5) Enter a known location manually\n6) Review mappings from this session\nB) Back")
         choice=ask("Select",1)
-        if choice=="5":print("\n".join(mapped) if mapped else "Nothing mapped in this session.");continue
-        if choice=="4":manual_mapping(session);continue
+        if choice=="6":print("\n".join(mapped) if mapped else "Nothing mapped in this session.");continue
+        if choice=="5":manual_mapping(session);continue
         values=ensure_discovery(session)
         if not values:return
         if choice=="1":
@@ -616,6 +647,8 @@ def mapping_menu(session):
             if map_numeric_point(session,name,item,values):mapped.append(name)
         elif choice=="3":
             if map_status(session,values):mapped.append("Boolean/status")
+        elif choice=="4":
+            if map_new_enum(session,values):mapped.append("Text/enumerated value")
         else:print("Invalid selection.")
 
 def read_current(session,item,carel_values=None):
@@ -673,6 +706,32 @@ def verify_menu(session):
     print("\nVERIFICATION SUMMARY")
     for key,value in counts.items():print(f"{key.title():<14}{value}")
 
+def export_profile(session):
+    profile=session["profile"];save(profile);stamp=time.strftime("%Y%m%d_%H%M%S")
+    folder=EXPORT_DIR/f"{pname(profile['name'])}_{stamp}";folder.mkdir(parents=True,exist_ok=True)
+    json_path=folder/"profile.json";json_path.write_text(json.dumps(profile,indent=2),encoding="utf-8")
+    columns=["name","description","register_type","address","token","units","scale_operation","scale","signed","access","verification","minimum","maximum","enum","documented_choices"]
+    csv_path=folder/"map.csv"
+    with csv_path.open("w",newline="",encoding="utf-8-sig") as handle:
+        writer=csv.DictWriter(handle,fieldnames=columns);writer.writeheader()
+        for name,item in profile.get("parameters",{}).items():
+            row={key:item.get(key,"") for key in columns};row["name"]=name
+            row["enum"]=json.dumps(item.get("enum",{}),ensure_ascii=False);row["documented_choices"]=json.dumps(item.get("documented_choices",{}),ensure_ascii=False)
+            writer.writerow(row)
+    report=[f"# {profile['name']} controller map","",f"Protocol: {profile.get('protocol','')}",f"Model: {profile.get('model','')}",f"Firmware: {profile.get('firmware','')}",f"Exported: {time.strftime('%Y-%m-%d %H:%M:%S')}","","| Name | Description | Location | Decoding | Verification |","|---|---|---|---|---|"]
+    for name,item in profile.get("parameters",{}).items():
+        location=item.get("token") or (f"{item.get('register_type','')} {item['address']}" if "address" in item else "unmapped")
+        decoding="enum" if item.get("enum") or item.get("documented_choices") else f"{item.get('scale_operation','divide')} {item.get('scale',1)}, signed={item.get('signed',False)}"
+        clean=lambda value:str(value).replace("|","/").replace("\n"," ")
+        report.append(f"| {clean(name)} | {clean(item.get('description',''))} | {clean(location)} | {clean(decoding)} | {clean(item.get('verification',''))} |")
+    md_path=folder/"map.md";md_path.write_text("\n".join(report)+"\n",encoding="utf-8")
+    latest=profile.get("latest_discovery_file")
+    if latest:
+        source=ROOT/latest
+        if source.exists():shutil.copy2(source,folder/"latest_discovery.json")
+    print("\nEXPORT COMPLETE")
+    print(f"JSON profile: {json_path}\nCSV map:      {csv_path}\nReadable map: {md_path}")
+
 def raw_monitor(session):
     c=session["connection"];print("Read-only byte monitor. Another Modbus master must create traffic. Ctrl+C stops.")
     try:
@@ -696,7 +755,7 @@ def main():
     while True:
         print("\n"+"="*64+f"\nACTIVE: {active(session)}\nPROFILE: {session['profile']['name']}\n"+"="*64)
         print("1) Test connection\n2) Read mapped values\n3) Discover readable locations\n4) Map parameters")
-        print("5) Verify mapped parameters\n6) Controlled write verification\n7) View profile\n8) Change connection\n9) Diagnostics\n0) Exit")
+        print("5) Verify mapped parameters\n6) Controlled write verification\n7) View profile\n8) Change connection\n9) Diagnostics\n10) Export profile/map\n0) Exit")
         try:
             ch=ask("Select",1)
             if ch=="1":test(session)
@@ -711,6 +770,7 @@ def main():
                 print("1) List serial devices\n2) Raw byte monitor\nB) Back");diag=ask("Select",1)
                 if diag=="1":ports()
                 elif diag=="2":raw_monitor(session)
+            elif ch=="10":export_profile(session)
             elif ch=="0":return 0
         except BackToMenu:
             print("Returning to main menu.")

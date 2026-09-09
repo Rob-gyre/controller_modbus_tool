@@ -19,6 +19,12 @@ Connection settings are entered once at startup and reused by every menu action.
 Use `Change connection` only when moving to another controller or adapter.
 Every prompt and submenu accepts `B` to return to the preceding/main menu.
 
+Choose `N) Create a new blank profile` on the profile-selection screen for an
+undocumented controller. Only a name, optional model/version and the connection
+settings are needed. No manual, known addresses or predefined scaling is
+required. Numeric values, text/enumerated values and Boolean/status points can
+then be learned interactively and are saved to that profile as work proceeds.
+
 ## Safety
 
 Register discovery and before/after mapping are read-only. The program never
@@ -81,9 +87,10 @@ as UTF-8 JSON in `profiles/`.
 Candidate selection defaults to `R` (reject) rather than forcing the first
 candidate. Only exact before/after matches are presented as candidates.
 
-Boolean/status mapping compares a state change and requires the selected bit to
-return to its original state before saving. This works with coils, discrete
-inputs and 0/1 register values. Unknown coils are never written.
+Boolean/status mapping compares a user-created state change. This works with
+coils, discrete inputs and 0/1 register values. Unknown coils are never written.
+After a successful identification the tool leaves the controller at its changed
+value; restore it manually only when the application requires it.
 
 Verification is a separate, user-led menu. Default/reference values imported
 from a workbook never verify a live controller automatically. For one or all
@@ -96,7 +103,17 @@ The XR77U profile also includes the enumerated choices documented in the
 Universal-R manual. During enum mapping the tool explains that the parameter
 label and displayed setting are different. For example, `dFd` is the parameter
 name while `dEF` is setting 3. A before/after read is still used to prove the
-actual Modbus address.
+actual Modbus address. If exactly one location changes, the tool offers to save
+it immediately instead of making the user select it from a one-item list.
+
+Every discovery scan is saved under `discoveries/` and linked from the active
+profile. Choose `Export profile/map` to create a timestamped folder under
+`exports/` containing:
+
+- `profile.json` — the complete reusable machine-readable profile.
+- `map.csv` — a spreadsheet-friendly parameter/register map (UTF-8 with BOM).
+- `map.md` — a concise human-readable report.
+- `latest_discovery.json` — the most recent discovery scan, when available.
 
 Both divide scaling and multiply scaling are supported. For example, raw 80
 divided by 10 is 8.0, while raw 9 multiplied by 10 is 90.
