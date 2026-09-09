@@ -482,6 +482,37 @@ def write_modbus(session):
     expected=meaning or f"{value:g} {i.get('units','')}".strip()
     if yesno(f"Does the physical controller now show {expected}"):i["verification"]="write_verified";i["access"]="read_write";i["current"]=value;save(p)
 
+def edit_mapped_location(session):
+    p=session["profile"];mapped=[(n,i) for n,i in p.get("parameters",{}).items() if "address" in i or "token" in i]
+    if not mapped:print("No mapped parameters to edit.");return
+    print("EDIT MAPPED LOCATION")
+    for index,(name,item) in enumerate(mapped,1):print(f" {index}) {name} - {item.get('token') or (item.get('register_type','holding')+' '+str(item.get('address')))}")
+    try:name,item=mapped[int(ask("Select mapped parameter",1))-1]
+    except (ValueError,IndexError):return
+    old_location=item.get("token") or f"{item.get('register_type','holding')} {item.get('address')}"
+    if session["protocol"]=="carel_pjez":
+        new_token=ask(f"New CAREL token (current {old_location})")
+        d=PJEZ(session["connection"]["port"],session["connection"]["unit"])
+        try:raw=d.dump().get(new_token)
+        finally:d.close()
+        if raw is None:print("The new token did not return a value; mapping was not changed.");return
+        print(f"New token {new_token} reads raw {raw}, decoded {decode_value(raw,item)} {item.get('units','')}")
+        if not yesno("Save this corrected token",True):return
+        item["token"]=new_token;item["previous_location"]=old_location;item["verification"]="location_edited";save(p);return
+    kind=ask(f"New register type (current {old_location})",item.get("register_type","holding")).lower()
+    if kind not in KINDS:print("Unknown register type.");return
+    try:address=int(ask("New register address",item.get("address")))
+    except ValueError:return
+    d=inst(session["connection"])
+    try:raw=readloc(d,kind,address)
+    finally:
+        try:d.serial.close()
+        except Exception:pass
+    if raw is None:print(f"No response from {kind} {address}; mapping was not changed.");return
+    print(f"New location {kind} {address} reads raw {raw}, decoded {display_value(raw,item)} {item.get('units','')}")
+    if not yesno("Save this corrected location",True):return
+    item["register_type"]=kind;item["address"]=address;item["previous_location"]=old_location;item["verification"]="location_edited";save(p)
+
 def chex(text):
     r=0
     for c in text:
@@ -1086,7 +1117,7 @@ def main():
         print("\n"+"="*64+f"\nACTIVE: {active(session)}\nPROFILE: {session['profile']['name']}\n"+"="*64)
         profile_summary(session["profile"])
         print("1) Test connection\n2) Read mapped values\n3) Discover readable locations\n4) Map parameters")
-        print("5) Verify mapped parameters\n6) Controlled write verification\n7) View profile\n8) Change connection\n9) Diagnostics\n10) Export profile/map\n0) Exit")
+        print("5) Verify mapped parameters\n6) Controlled write verification\n7) View profile\n8) Change connection\n9) Diagnostics\n10) Export profile/map\n11) Edit mapped location\n0) Exit")
         try:
             ch=ask("Select",1)
             if ch=="1":test(session)
@@ -1103,6 +1134,7 @@ def main():
                 elif diag=="2":raw_monitor(session)
                 elif diag=="3":diagnostics(session)
             elif ch=="10":export_profile(session)
+            elif ch=="11":edit_mapped_location(session)
             elif ch=="0":return 0
         except BackToMenu:
             print("Returning to main menu.")
