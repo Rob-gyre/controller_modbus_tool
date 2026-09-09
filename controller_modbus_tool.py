@@ -459,10 +459,12 @@ def quick_candidates(values,target,item):
     prefer_signed=isinstance(item.get("minimum"),(int,float)) and item["minimum"]<0
     for kind,locations in values.items():
         for address,raw in locations.items():
-            for signed in (prefer_signed,not prefer_signed):
+            signed_options=(False,) if raw<0x8000 else (prefer_signed,not prefer_signed)
+            for signed in signed_options:
                 number=s16(raw) if signed else raw
-                for operation in ("divide","multiply"):
-                    for factor in (1,10,100,1000):
+                for factor in (1,10,100,1000):
+                    operations=("divide",) if factor==1 else ("divide","multiply")
+                    for operation in operations:
                         decoded=number*factor if operation=="multiply" else number/factor
                         if abs(decoded-target)<1e-7:
                             penalty=(0 if signed==prefer_signed else 2)+(0 if operation=="divide" else 1)
@@ -476,10 +478,12 @@ def exact_changes(before,after,old,new,item):
         for address,braw in locations.items():
             if address not in after.get(kind,{}) or after[kind][address]==braw:continue
             araw=after[kind][address]
-            for signed in (False,True):
+            signed_options=(False,) if braw<0x8000 and araw<0x8000 else (False,True)
+            for signed in signed_options:
                 b=s16(braw) if signed else braw;a=s16(araw) if signed else araw
-                for operation in ("divide","multiply"):
-                    for factor in (1,10,100,1000):
+                for factor in (1,10,100,1000):
+                    operations=("divide",) if factor==1 else ("divide","multiply")
+                    for operation in operations:
                         bd=b*factor if operation=="multiply" else b/factor
                         ad=a*factor if operation=="multiply" else a/factor
                         if abs(bd-old)<1e-7 and abs(ad-new)<1e-7:
