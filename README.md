@@ -17,6 +17,7 @@ investigation.
 
 Connection settings are entered once at startup and reused by every menu action.
 Use `Change connection` only when moving to another controller or adapter.
+Every prompt and submenu accepts `B` to return to the preceding/main menu.
 
 ## Safety
 
@@ -61,6 +62,8 @@ Modbus discovery can scan all standard read areas without profile restrictions:
 
 The mapping menu remains open so several parameters can be mapped in one session.
 The discovery result and active connection are reused rather than entered again.
+It supports existing profile parameters, new numeric values, Boolean/status
+points and manually known locations.
 
 Quick mapping first compares the parameter's current displayed value with all
 readable locations and common signed/scaled interpretations. One unique match can
@@ -75,10 +78,22 @@ Confirm/edit scale [10]:
 Press Enter to accept the suggestion or type another scale. Profiles are saved
 as UTF-8 JSON in `profiles/`.
 
-Verification is a separate menu. It can verify one parameter or compare all
-numeric mappings with current values saved in the profile. Evidence states are
-`mapped_unverified`, `value_matched`, `value_verified`, `change_verified` and
-`write_verified`.
+Candidate selection defaults to `R` (reject) rather than forcing the first
+candidate. Only exact before/after matches are presented as candidates.
+
+Boolean/status mapping compares a state change and requires the selected bit to
+return to its original state before saving. This works with coils, discrete
+inputs and 0/1 register values. Unknown coils are never written.
+
+Verification is a separate, user-led menu. Default/reference values imported
+from a workbook never verify a live controller automatically. For one or all
+mapped points, the program displays the raw and decoded value and asks the user
+to confirm it against the physical controller. Text responses create enum
+mappings. Evidence states include `mapped_unverified`, `value_matched`,
+`user_verified`, `change_verified` and `write_verified`.
+
+Both divide scaling and multiply scaling are supported. For example, raw 80
+divided by 10 is 8.0, while raw 9 multiplied by 10 is 90.
 
 ## Upload the existing repository to GitHub
 

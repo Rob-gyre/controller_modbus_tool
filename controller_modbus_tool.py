@@ -62,11 +62,28 @@ CAREL={"Pb1":("S11",10,True,"Probe 1","C"),"Pb2":("S21",10,True,"Probe 2","C"),"
 "d6":("BM1",1,False,"Display during defrost","bool"),"d9":("BN1",1,False,"Defrost priority","bool"),"dC":("BO1",1,False,"Defrost time base","bool"),
 "F0":("BQ1",1,False,"Fan control","bool"),"F2":("BR1",1,False,"Fans cycle with compressor","bool"),"F3":("BS1",1,False,"Fans in defrost","bool")}
 
+class BackToMenu(Exception):pass
+
 def ask(text,default=None):
-    v=input(text+(f" [{default}]" if default is not None else "")+": ").strip(); return v or (str(default) if default is not None else "")
+    v=input(text+(f" [{default}]" if default is not None else "")+" (B=Back): ").strip()
+    if v.lower()=="b":raise BackToMenu
+    return v or (str(default) if default is not None else "")
 def yesno(text,default=False):
-    v=input(f"{text} [{'Y/n' if default else 'y/N'}]: ").strip().lower(); return default if not v else v in ("y","yes")
+    v=input(f"{text} [{'Y/n' if default else 'y/N'}] (B=Back): ").strip().lower()
+    if v=="b":raise BackToMenu
+    return default if not v else v in ("y","yes")
+def pause(text):
+    v=input(text+" (B=Back): ").strip()
+    if v.lower()=="b":raise BackToMenu
 def s16(v): return v-65536 if v>=32768 else v
+def decode_value(raw,item):
+    if raw is None:return None
+    if item.get("enum") and str(raw) in item["enum"]:return item["enum"][str(raw)]
+    number=s16(raw) if item.get("signed") else raw; factor=float(item.get("scale",1))
+    return number*factor if item.get("scale_operation")=="multiply" else number/factor
+def encode_value(value,item):
+    factor=float(item.get("scale",1))
+    return int(round(value/factor if item.get("scale_operation")=="multiply" else value*factor))
 def pname(n): return "".join(c.lower() if c.isalnum() else "_" for c in n).strip("_")
 def save(p):
     PROFILE_DIR.mkdir(exist_ok=True); path=PROFILE_DIR/f"{pname(p['name'])}.json"; path.write_text(json.dumps(p,indent=2),encoding="utf-8"); print(f"Saved {path}")
@@ -75,8 +92,8 @@ def seed():
     PROFILE_DIR.mkdir(exist_ok=True)
     if not (PROFILE_DIR/"xr77u.json").exists():
         ps={}
-        for n,(a,sc,sg,d,u,g,cur,lo,hi) in XR_MAPPED.items(): ps[n]={"address":a,"register_type":"holding","scale":sc,"signed":sg,"description":d,"units":u,"group":g,"current":cur,"minimum":lo,"maximum":hi,"access":"unknown","verification":"mapped_unverified"}
-        for n,(d,u,g,cur,lo,hi) in XR_UNMAPPED.items(): ps[n]={"description":d,"units":u,"group":g,"current":cur,"minimum":lo,"maximum":hi,"verification":"unmapped"}
+        for n,(a,sc,sg,d,u,g,cur,lo,hi) in XR_MAPPED.items(): ps[n]={"address":a,"register_type":"holding","scale":sc,"scale_operation":"divide","signed":sg,"description":d,"units":u,"group":g,"default_reference":cur,"minimum":lo,"maximum":hi,"access":"unknown","verification":"mapped_unverified"}
+        for n,(d,u,g,cur,lo,hi) in XR_UNMAPPED.items(): ps[n]={"description":d,"units":u,"group":g,"default_reference":cur,"minimum":lo,"maximum":hi,"verification":"unmapped","high_risk":n=="tC"}
         save({"name":"XR77U","protocol":"modbus_rtu","model":"XR77U / 2C310000","firmware":"5.9","connection":{"port":"/dev/ttyUSB0","slave":1,"baudrate":9600,"parity":"N","stopbits":1,"timeout":.6},"parameters":ps})
     if not (PROFILE_DIR/"carel_pjezc0p000.json").exists():
         ps={n:{"token":t,"scale":sc,"signed":sg,"description":d,"units":u,"verification":"live_confirmed","access":"read_write"} for n,(t,sc,sg,d,u) in CAREL.items()}
@@ -90,9 +107,20 @@ def get_profiles(protocol=None):
             if p.get("name")=="XR77U":
                 changed=False; items=p.setdefault("parameters",{})
                 for n,(a,sc,sg,d,u,g,cur,lo,hi) in XR_MAPPED.items():
-                    if n not in items:items[n]={"address":a,"register_type":"holding","scale":sc,"signed":sg,"description":d,"units":u,"group":g,"current":cur,"minimum":lo,"maximum":hi,"access":"read","verification":"mapped_unverified"};changed=True
+                    source={"address":a,"register_type":"holding","scale":sc,"scale_operation":"divide","signed":sg,"description":d,"units":u,"group":g,"default_reference":cur,"minimum":lo,"maximum":hi}
+                    if n not in items:items[n]={**source,"access":"read","verification":"mapped_unverified"};changed=True
+                    else:
+                        for key,value in source.items():
+                            if key not in items[n] or items[n][key] is None:items[n][key]=value;changed=True
                 for n,(d,u,g,cur,lo,hi) in XR_UNMAPPED.items():
-                    if n not in items:items[n]={"description":d,"units":u,"group":g,"current":cur,"minimum":lo,"maximum":hi,"verification":"unmapped"};changed=True
+                    source={"description":d,"units":u,"group":g,"default_reference":cur,"minimum":lo,"maximum":hi,"high_risk":n=="tC"}
+                    if n not in items:items[n]={**source,"verification":"unmapped"};changed=True
+                    else:
+                        for key,value in source.items():
+                            if key not in items[n] or items[n][key] is None:items[n][key]=value;changed=True
+                for item in items.values():
+                    if "current" in item and item.get("verification") not in ("user_verified","write_verified"):
+                        item.pop("current",None);changed=True
                 if changed:save(p)
             if protocol is None or p.get("protocol")==protocol: out.append(p)
         except Exception as e: print(f"Could not load {f.name}: {e}")
@@ -100,6 +128,7 @@ def get_profiles(protocol=None):
 def choose_profile(protocol=None):
     ps=get_profiles(protocol)
     for i,p in enumerate(ps,1): print(f" {i}) {p['name']} ({p['protocol']})")
+    print(" B) Back")
     try:return ps[int(ask("Select profile",1))-1]
     except (ValueError,IndexError):return None
 
@@ -119,6 +148,14 @@ def inst(c):
 def readloc(d,kind,address):
     try:return d.read_bit(address,functioncode=KINDS[kind]) if kind in ("coil","discrete") else d.read_register(address,0,functioncode=KINDS[kind],signed=False)
     except Exception:return None
+def scan_block(d,kind,start,count,found):
+    try:
+        values=d.read_bits(start,count,functioncode=KINDS[kind]) if kind in ("coil","discrete") else d.read_registers(start,count,functioncode=KINDS[kind])
+        for offset,value in enumerate(values):found[start+offset]=int(value)
+        return
+    except Exception:pass
+    if count==1:return
+    left=count//2;scan_block(d,kind,start,left,found);scan_block(d,kind,start+left,count-left,found)
 def scan(session,kinds=None,ask_range=True,quiet=False):
     if session["protocol"]!="modbus_rtu":print("Modbus discovery requires a Modbus connection.");return None
     if kinds is None:
@@ -127,12 +164,13 @@ def scan(session,kinds=None,ask_range=True,quiet=False):
     start=int(ask("Starting address",0)) if ask_range else 0; end=int(ask("Ending address",999)) if ask_range else 999; d=inst(session["connection"]); result={k:{} for k in kinds}
     print("Read-only discovery. No values will be written.")
     for kind in kinds:
-        for address in range(start,end+1):
-            value=readloc(d,kind,address)
-            if value is not None:
-                result[kind][address]=value
-                if not quiet:print(f" FOUND {kind} {address} raw={value}")
-            if address and address%100==0:print(f" {kind}: through {address}, readable={len(result[kind])}")
+        address=start;next_report=start+127
+        while address<=end:
+            count=min(32,end-address+1);before=len(result[kind]);scan_block(d,kind,address,count,result[kind])
+            if not quiet:
+                for found_address in sorted(a for a in result[kind] if address<=a<address+count):print(f" FOUND {kind} {found_address} raw={result[kind][found_address]}")
+            address+=count
+            if address>next_report:print(f" {kind}: through {min(address-1,end)}, readable={len(result[kind])}");next_report+=128
         print(f"{kind}: {len(result[kind])} readable")
     session["discovery"]={"start":start,"end":end,"values":result}; (ROOT/"last_discovery.json").write_text(json.dumps(session["discovery"],indent=2),encoding="utf-8"); return result
 
@@ -152,12 +190,12 @@ def read_profile(session):
     if session["protocol"]=="carel_pjez":
         d=PJEZ(session["connection"]["port"],session["connection"]["unit"]); values=d.dump();d.close()
         for n,i in p["parameters"].items():
-            raw=values.get(i.get("token")); val="N/A" if raw is None else f"{(s16(raw) if i.get('signed') else raw)/float(i.get('scale',1)):g}";print(f"{n:<8}{val:>10} {i.get('units',''):<5} {i.get('token','')}")
+            raw=values.get(i.get("token")); decoded=decode_value(raw,i); val="N/A" if decoded is None else str(decoded);print(f"{n:<8}{val:>10} {i.get('units',''):<5} {i.get('token','')}")
         return
     d=inst(session["connection"])
     for n,i in p["parameters"].items():
         if "address" not in i:continue
-        raw=readloc(d,i.get("register_type","holding"),i["address"]); val="N/A" if raw is None else f"{(s16(raw) if i.get('signed') else raw)/float(i.get('scale',1)):g}"
+        raw=readloc(d,i.get("register_type","holding"),i["address"]); decoded=decode_value(raw,i); val="N/A" if decoded is None else str(decoded)
         print(f"{n:<8}{val:>10} {i.get('units',''):<5} {i.get('register_type','holding')[0].upper()}:{i['address']} {i.get('verification','')}")
 
 def possible(values,target,item):
@@ -217,13 +255,16 @@ def mapping_session(session):
         else:
             print(f"{len(matches)} exact interpretations found. A change is needed to distinguish them.")
             if not yesno("Change this parameter now",True):continue
-            input("Change only this parameter, exit the keypad menu, then press ENTER...")
+            pause("Change only this parameter, exit the keypad menu, then press ENTER")
             try:new=float(ask("New displayed value"))
             except ValueError:continue
-            after=refresh(session,current_values); cs=delta_candidates(current_values,after,current,new,item)
+            after=refresh(session,current_values); cs=[c for c in delta_candidates(current_values,after,current,new,item) if c[0]<1e-6]
             for x,c in enumerate(cs[:20],1):print(f" {x}) {c[1]} {c[2]} raw {c[3]}->{c[4]}, scale {c[5]}, signed={c[6]}")
-            if not cs:print("No matching change found.");continue
-            try:c=cs[int(ask("Select candidate",1))-1];scale=float(ask("Confirm/edit scale",c[5]))
+            if not cs:print("No exact matching change found. Nothing was saved.");continue
+            try:
+                selected=ask("Select candidate, or R to reject","R")
+                if selected.lower()=="r":print("Candidates rejected. Nothing was saved.");continue
+                c=cs[int(selected)-1];scale=float(ask("Confirm/edit scale",c[5]))
             except (ValueError,IndexError):continue
             if yesno(f"Save {name} as {c[1]} {c[2]}",True):item.update({"register_type":c[1],"address":c[2],"scale":scale,"signed":c[6],"access":"read","verification":"change_verified"});save(session["profile"]);mapped.append(name)
         print(f"Mapped this session: {', '.join(mapped) or 'none'}")
@@ -258,7 +299,7 @@ def write_modbus(session):
     for x,(n,i) in enumerate(mapped,1):print(f" {x}) {n} H:{i['address']}")
     try:n,i=mapped[int(ask("Select",1))-1];value=float(ask("Value to write"))
     except (ValueError,IndexError):return
-    raw=int(round(value*float(i.get("scale",1))));print(f"WARNING: leaves controller changed. {n}={value:g}, H:{i['address']}, raw={raw}")
+    raw=encode_value(value,i);print(f"WARNING: leaves controller changed. {n}={value:g}, H:{i['address']}, raw={raw}")
     if ask("Type WRITE to confirm")!="WRITE":return
     d=inst(session["connection"])
     try:d.write_register(i["address"],raw,0,functioncode=6,signed=i.get("signed",False));time.sleep(.3);print(f"Read-back raw: {readloc(d,'holding',i['address'])}")
@@ -331,13 +372,16 @@ def map_carel_session(session):
         else:
             print(f"{len(matches)} exact interpretations found. Change is needed to distinguish them.")
             if yesno("Change this parameter now",True):
-                input("Change only this parameter, exit its menu, then press ENTER...")
+                pause("Change only this parameter, exit its menu, then press ENTER")
                 try:new=float(ask("New displayed value"))
                 except ValueError:d.close();return
-                after=d.dump();cs=delta_candidates({"token":before},{"token":after},old,new,item)
+                after=d.dump();cs=[c for c in delta_candidates({"token":before},{"token":after},old,new,item) if c[0]<1e-6]
                 for x,c in enumerate(cs[:20],1):print(f" {x}) token {c[2]} raw {c[3]}->{c[4]}, scale {c[5]}, signed={c[6]}")
                 if cs:
-                    try:c=cs[int(ask("Select candidate",1))-1];scale=float(ask("Confirm/edit scale",c[5]))
+                    try:
+                        selected=ask("Select candidate, or R to reject","R")
+                        if selected.lower()=="r":d.close();continue
+                        c=cs[int(selected)-1];scale=float(ask("Confirm/edit scale",c[5]))
                     except (ValueError,IndexError):d.close();return
                     if yesno(f"Save {name} as token {c[2]}",True):item.update({"token":str(c[2]),"scale":scale,"signed":c[6],"access":"read","verification":"change_verified"});p.setdefault("parameters",{})[name]=item;save(p);mapped.append(name)
         d.close();print(f"Mapped this session: {', '.join(mapped) or 'none'}")
@@ -352,28 +396,249 @@ def write_carel(session):
     if ask("Type WRITE to confirm")!="WRITE":return
     d=PJEZ(session["connection"]["port"],session["connection"]["unit"]);ok=d.write_token(i["token"],raw,password);d.close();print("Write ACK received." if ok else "Write failed or no ACK.")
 
+def ensure_discovery(session):
+    if session.get("discovery"):return session["discovery"]["values"]
+    print("No discovery is loaded. Run a read-only scan now.")
+    return scan(session)
+
+def current_snapshot(session,template):
+    return refresh(session,template)
+
+def quick_candidates(values,target,item):
+    candidates=[]
+    prefer_signed=isinstance(item.get("minimum"),(int,float)) and item["minimum"]<0
+    for kind,locations in values.items():
+        for address,raw in locations.items():
+            for signed in (prefer_signed,not prefer_signed):
+                number=s16(raw) if signed else raw
+                for operation in ("divide","multiply"):
+                    for factor in (1,10,100,1000):
+                        decoded=number*factor if operation=="multiply" else number/factor
+                        if abs(decoded-target)<1e-7:
+                            penalty=(0 if signed==prefer_signed else 2)+(0 if operation=="divide" else 1)
+                            candidates.append((penalty,kind,address,raw,factor,signed,operation))
+    unique={(c[1],c[2],c[4],c[5],c[6]):c for c in candidates}
+    return sorted(unique.values())
+
+def exact_changes(before,after,old,new,item):
+    candidates=[]
+    for kind,locations in before.items():
+        for address,braw in locations.items():
+            if address not in after.get(kind,{}) or after[kind][address]==braw:continue
+            araw=after[kind][address]
+            for signed in (False,True):
+                b=s16(braw) if signed else braw;a=s16(araw) if signed else araw
+                for operation in ("divide","multiply"):
+                    for factor in (1,10,100,1000):
+                        bd=b*factor if operation=="multiply" else b/factor
+                        ad=a*factor if operation=="multiply" else a/factor
+                        if abs(bd-old)<1e-7 and abs(ad-new)<1e-7:
+                            candidates.append((kind,address,braw,araw,factor,signed,operation))
+    return candidates
+
+def save_numeric_candidate(session,name,item,candidate,status):
+    kind,address,braw,araw,factor,signed,operation=candidate
+    print(f"{kind} {address}: raw {braw}" + (f" -> {araw}" if araw is not None else ""))
+    print(f"Interpretation: {operation} by {factor}; signed={signed}")
+    operation=ask("Scale operation divide/multiply",operation).lower()
+    factor=float(ask("Confirm/edit scale",factor))
+    item.update({"register_type":kind,"address":address,"scale":factor,"scale_operation":operation,
+                 "signed":signed,"access":"read","verification":status})
+    session["profile"].setdefault("parameters",{})[name]=item;save(session["profile"])
+
+def map_numeric_point(session,name,item,values):
+    if item.get("high_risk"):
+        print("WARNING: This setting changes the controller application map.")
+        if not yesno("Include this high-risk parameter",False):return False
+    reference=item.get("default_reference")
+    try:old=float(ask("Controller current value",reference))
+    except (ValueError,TypeError):print("A numeric value is required.");return False
+    before=current_snapshot(session,values);matches=quick_candidates(before,old,item)
+    if len(matches)==1:
+        _,kind,address,raw,factor,signed,operation=matches[0]
+        print(f"One exact match: {kind} {address}, raw {raw}, {operation} {factor}, signed={signed}")
+        if yesno("Save as probable mapping",True):
+            save_numeric_candidate(session,name,item,(kind,address,raw,None,factor,signed,operation),"value_matched");return True
+        return False
+    print(f"{len(matches)} exact interpretations found. A change is needed to distinguish them.")
+    if not yesno("Change this value now",True):return False
+    pause("Change only this value, exit the controller menu, then press ENTER")
+    try:new=float(ask("New displayed value"))
+    except ValueError:return False
+    after=current_snapshot(session,before);matches=exact_changes(before,after,old,new,item)
+    if not matches:print("No exact matching change found. Nothing was saved.");return False
+    for x,c in enumerate(matches,1):print(f" {x}) {c[0]} {c[1]} raw {c[2]}->{c[3]}, {c[6]} {c[4]}, signed={c[5]}")
+    selected=ask("Select candidate, or R to reject","R")
+    if selected.lower()=="r":return False
+    try:candidate=matches[int(selected)-1]
+    except (ValueError,IndexError):print("Invalid selection.");return False
+    if yesno(f"Save {name}",True):save_numeric_candidate(session,name,item,candidate,"change_verified");return True
+    return False
+
+def map_status(session,values):
+    name=ask("Status name");description=ask("Description",name)
+    print("Use a condition you can safely turn ON and OFF. Unknown bits will only be read.")
+    initial=ask("Current physical state OFF/ON","OFF").upper()
+    before=current_snapshot(session,values)
+    pause(f"Change {name} from {initial} to {'ON' if initial=='OFF' else 'OFF'}, then press ENTER")
+    after=current_snapshot(session,before);changes=[]
+    for kind in ("coil","discrete","holding","input"):
+        for address,b in before.get(kind,{}).items():
+            a=after.get(kind,{}).get(address)
+            if a is not None and a!=b and b in (0,1) and a in (0,1):changes.append((kind,address,b,a))
+    if not changes:print("No Boolean changes found.");return False
+    for x,c in enumerate(changes,1):print(f" {x}) {c[0]} {c[1]}: {c[2]} -> {c[3]}")
+    selected=ask("Select candidate, or R to reject","R")
+    if selected.lower()=="r":return False
+    try:kind,address,b,a=changes[int(selected)-1]
+    except (ValueError,IndexError):return False
+    pause(f"Return {name} to {initial}, then press ENTER")
+    final=current_snapshot(session,{kind:{address:a}}).get(kind,{}).get(address)
+    if final!=b:
+        print(f"Reverse confirmation failed: expected {b}, read {final}. Nothing saved.");return False
+    item={"register_type":kind,"address":address,"scale":1,"scale_operation":"divide","signed":False,
+          "description":description,"units":"bool","access":"read","verification":"change_verified",
+          "on_value":a if initial=="OFF" else b,"off_value":b if initial=="OFF" else a}
+    session["profile"].setdefault("parameters",{})[name]=item;save(session["profile"]);return True
+
+def manual_mapping(session):
+    name=ask("Name");description=ask("Description",name)
+    if session["protocol"]=="carel_pjez":
+        token=ask("CAREL token");item={"token":token,"description":description,"units":ask("Units",""),"scale":float(ask("Scale",1)),
+          "scale_operation":ask("Scale operation divide/multiply","divide"),"signed":yesno("Signed 16-bit",False),"access":"read","verification":"mapped_unverified"}
+    else:
+        print("Types: holding, input, coil, discrete");kind=ask("Location type","holding").lower();address=int(ask("Address"))
+        item={"register_type":kind,"address":address,"description":description,"units":ask("Units",""),
+          "scale":float(ask("Scale",1)),"scale_operation":ask("Scale operation divide/multiply","divide"),
+          "signed":yesno("Signed 16-bit",False),"access":"read","verification":"mapped_unverified"}
+    session["profile"].setdefault("parameters",{})[name]=item;save(session["profile"])
+
+def mapping_menu(session):
+    if session["protocol"]=="carel_pjez":
+        print("CAREL mappings use two F1 table dumps and can be repeated in one session.")
+        map_carel_session(session);return
+    mapped=[]
+    while True:
+        print("\nMAP PARAMETERS AND STATUS")
+        print("1) Map existing profile parameter\n2) Add and map a new numeric value\n3) Add and map a Boolean/status")
+        print("4) Enter a known location manually\n5) Review mappings from this session\nB) Back")
+        choice=ask("Select",1)
+        if choice=="5":print("\n".join(mapped) if mapped else "Nothing mapped in this session.");continue
+        if choice=="4":manual_mapping(session);continue
+        values=ensure_discovery(session)
+        if not values:return
+        if choice=="1":
+            available=[(n,i) for n,i in session["profile"]["parameters"].items() if "address" not in i and "token" not in i]
+            for x,(n,i) in enumerate(available,1):
+                risk=" [HIGH RISK]" if i.get("high_risk") else ""
+                print(f" {x}) {n:<5} {i.get('description','')}{risk}")
+            try:name,item=available[int(ask("Select parameter",1))-1]
+            except (ValueError,IndexError):continue
+            if map_numeric_point(session,name,item,values):mapped.append(name)
+        elif choice=="2":
+            name=ask("Name");item={"description":ask("Description",name),"units":ask("Units",""),
+                "minimum":None,"maximum":None,"verification":"unmapped"}
+            if map_numeric_point(session,name,item,values):mapped.append(name)
+        elif choice=="3":
+            if map_status(session,values):mapped.append("Boolean/status")
+        else:print("Invalid selection.")
+
+def read_current(session,item,carel_values=None):
+    if session["protocol"]=="carel_pjez":
+        return carel_values.get(item.get("token")) if carel_values else None
+    return readloc(inst(session["connection"]),item.get("register_type","holding"),item["address"])
+
+def verify_menu(session):
+    mapped=[(n,i) for n,i in session["profile"]["parameters"].items() if "address" in i or "token" in i]
+    print("1) Verify one mapped value with user\n2) Verify all mapped values with user\n3) Review statuses\nB) Back")
+    choice=ask("Select",1)
+    if choice=="3":
+        for n,i in mapped:print(f"{n:<10}{i.get('verification','unknown')}")
+        return
+    if choice=="1":
+        for x,(n,i) in enumerate(mapped,1):print(f" {x}) {n}")
+        try:mapped=[mapped[int(ask("Select",1))-1]]
+        except (ValueError,IndexError):return
+    carel_values=None
+    if session["protocol"]=="carel_pjez":
+        d=PJEZ(session["connection"]["port"],session["connection"]["unit"]);carel_values=d.dump();d.close()
+    counts={"verified":0,"not matched":0,"skipped":0,"no response":0}
+    for index,(name,item) in enumerate(mapped,1):
+        raw=read_current(session,item,carel_values)
+        if raw is None:print(f"{name}: NO RESPONSE");counts["no response"]+=1;continue
+        decoded=decode_value(raw,item);loc=item.get("token") or f"{item.get('register_type','holding')}:{item.get('address')}"
+        print(f"\nParameter {index} of {len(mapped)}: {name}\nLocation: {loc}\nRaw: {raw}\nDecoded: {decoded} {item.get('units','')}")
+        if isinstance(decoded,str) and item.get("enum"):
+            answer=ask("Does the controller show this text? Y/N/S","S").lower()
+        else:
+            answer=ask("Does the controller show this value? Y/N/E/S","S").lower()
+        if answer=="y":item["verification"]="user_verified";item["last_user_verified"]=decoded;counts["verified"]+=1
+        elif answer=="e":
+            shown=ask("Enter exact text/value shown")
+            try:
+                numeric=float(shown)
+                if isinstance(decoded,(int,float)) and abs(decoded-numeric)<1e-7:item["verification"]="user_verified";item["last_user_verified"]=numeric;counts["verified"]+=1
+                else:
+                    print(f"Values differ: decoded {decoded}, controller {numeric}.")
+                    if yesno("Edit scaling now",True):
+                        signed=yesno("Interpret raw value as signed 16-bit",item.get("signed",False));base=s16(raw) if signed else raw
+                        suggested_operation="multiply" if numeric and abs(numeric)>abs(base) else "divide"
+                        suggested_factor=abs(numeric/base) if suggested_operation=="multiply" and base else abs(base/numeric) if numeric else 1
+                        operation=ask("Scale operation divide/multiply",suggested_operation).lower();factor=float(ask("Scale factor",f"{suggested_factor:g}"))
+                        item.update({"signed":signed,"scale_operation":operation,"scale":factor});revised=decode_value(raw,item)
+                        print(f"Revised decoded value: {revised}")
+                        if isinstance(revised,(int,float)) and abs(revised-numeric)<1e-7:item["verification"]="user_verified";item["last_user_verified"]=numeric;counts["verified"]+=1
+                        else:counts["not matched"]+=1
+                    else:counts["not matched"]+=1
+            except ValueError:
+                item.setdefault("enum",{})[str(raw)]=shown;item["verification"]="user_verified";item["last_user_verified"]=shown;counts["verified"]+=1
+        elif answer=="n":counts["not matched"]+=1
+        else:counts["skipped"]+=1
+        save(session["profile"])
+    print("\nVERIFICATION SUMMARY")
+    for key,value in counts.items():print(f"{key.title():<14}{value}")
+
+def raw_monitor(session):
+    c=session["connection"];print("Read-only byte monitor. Another Modbus master must create traffic. Ctrl+C stops.")
+    try:
+        d=serial.Serial(c["port"],c["baudrate"],bytesize=8,parity=c["parity"],stopbits=c["stopbits"],timeout=.5)
+        while True:
+            data=d.read(d.in_waiting or 1)
+            if data:print(f"[{time.strftime('%H:%M:%S')}] {data.hex(' ')}")
+    except KeyboardInterrupt:print("Monitor stopped.")
+    finally:
+        if "d" in locals() and d.is_open:d.close()
+
 def ports():
     for p in serial.tools.list_ports.comports():print(f"{p.device}: {p.description} [{p.hwid}]")
 def active(s):
     c=s["connection"];return f"{c['port']} | {s['protocol']} | "+(f"address {c['slave']} | {c['baudrate']} 8{c['parity']}{c['stopbits']}" if s["protocol"]=="modbus_rtu" else f"unit {c['unit']} | 19200 8N2")
 def main():
-    seed();session=configure()
+    seed()
+    try:session=configure()
+    except BackToMenu:return 0
     if not session:return 1
     while True:
         print("\n"+"="*64+f"\nACTIVE: {active(session)}\nPROFILE: {session['profile']['name']}\n"+"="*64)
         print("1) Test connection\n2) Read mapped values\n3) Discover readable locations\n4) Map parameters")
-        print("5) Verify mapped parameters\n6) Controlled write verification\n7) View profile\n8) Change connection\n9) List serial devices\n0) Exit")
-        ch=ask("Select",1)
-        if ch=="1":test(session)
-        elif ch=="2":read_profile(session)
-        elif ch=="3":scan(session)
-        elif ch=="4":mapping_session(session)
-        elif ch=="5":verify(session)
-        elif ch=="6":write_modbus(session) if session["protocol"]=="modbus_rtu" else write_carel(session)
-        elif ch=="7":print(json.dumps(session["profile"],indent=2))
-        elif ch=="8":session=configure(session) or session
-        elif ch=="9":ports()
-        elif ch=="0":return 0
+        print("5) Verify mapped parameters\n6) Controlled write verification\n7) View profile\n8) Change connection\n9) Diagnostics\n0) Exit")
+        try:
+            ch=ask("Select",1)
+            if ch=="1":test(session)
+            elif ch=="2":read_profile(session)
+            elif ch=="3":scan(session)
+            elif ch=="4":mapping_menu(session)
+            elif ch=="5":verify_menu(session)
+            elif ch=="6":write_modbus(session) if session["protocol"]=="modbus_rtu" else write_carel(session)
+            elif ch=="7":print(json.dumps(session["profile"],indent=2))
+            elif ch=="8":session=configure(session) or session
+            elif ch=="9":
+                print("1) List serial devices\n2) Raw byte monitor\nB) Back");diag=ask("Select",1)
+                if diag=="1":ports()
+                elif diag=="2":raw_monitor(session)
+            elif ch=="0":return 0
+        except BackToMenu:
+            print("Returning to main menu.")
 if __name__=="__main__":
     try:raise SystemExit(main())
     except KeyboardInterrupt:print("\nStopped safely.");raise SystemExit(130)
