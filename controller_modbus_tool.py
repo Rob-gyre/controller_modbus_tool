@@ -319,17 +319,20 @@ def test(session):
 
 def read_profile(session):
     p=session["profile"]
+    print("NAME   VALUE | RAW | LOCATION | DESCRIPTION | STATUS")
     if session["protocol"]=="carel_pjez":
         d=PJEZ(session["connection"]["port"],session["connection"]["unit"]); values=d.dump();d.close()
         for n,i in p["parameters"].items():
-            raw=values.get(i.get("token"));val=display_value(raw,i);print(f"{n:<8}{val:>32} {i.get('units',''):<5} {i.get('token','')}")
+            raw=values.get(i.get("token"));val=display_value(raw,i);raw_text="N/A" if raw is None else str(raw)
+            print(f"{n:<6} {val} {i.get('units','')} | raw={raw_text} | token {i.get('token','')} | {i.get('description','')} | {i.get('verification','unknown')}")
         return
     d=inst(session["connection"])
     try:
         for n,i in p["parameters"].items():
             if "address" not in i:continue
-            raw=readloc(d,i.get("register_type","holding"),i["address"]);val=display_value(raw,i)
-            print(f"{n:<8}{val:>32} {i.get('units',''):<5} {i.get('register_type','holding')[0].upper()}:{i['address']} {i.get('verification','')}")
+            raw=readloc(d,i.get("register_type","holding"),i["address"]);val=display_value(raw,i);raw_text="N/A" if raw is None else str(raw)
+            location=f"{i.get('register_type','holding')[0].upper()}:{i['address']}"
+            print(f"{n:<6} {val} {i.get('units','')} | raw={raw_text} | {location} | {i.get('description','')} | {i.get('verification','unknown')}")
     finally:
         try:d.serial.close()
         except Exception:pass
