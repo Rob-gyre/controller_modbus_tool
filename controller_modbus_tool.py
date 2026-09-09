@@ -417,8 +417,21 @@ def write_modbus(session):
         print("Write cancelled; nothing was sent.");return
     d=inst(session["connection"])
     try:
-        d.write_register(i["address"],raw,0,functioncode=6,signed=i.get("signed",False));time.sleep(.3);readback=readloc(d,"holding",i["address"]);print(f"Read-back: raw {readback}, displayed interpretation {display_value(readback,i)}")
+        d.write_register(i["address"],raw,0,functioncode=6,signed=i.get("signed",False))
+        expected_raw=raw&0xFFFF;readback=None
+        for _ in range(3):
+            time.sleep(.25);readback=readloc(d,"holding",i["address"])
+            if readback is not None:break
+        print(f"Read-back: raw {readback}, displayed interpretation {display_value(readback,i)}")
     except Exception as e:print(f"Write failed: {e}");return
+    finally:
+        try:d.serial.close()
+        except Exception:pass
+    if readback is None:
+        print("WRITE NOT VERIFIED: the register did not respond to three read-back attempts.");return
+    if readback!=expected_raw:
+        print(f"WRITE NOT VERIFIED: expected raw {expected_raw}, but read back raw {readback}.");return
+    print("Register read-back matches the value that was sent.")
     expected=meaning or f"{value:g} {i.get('units','')}".strip()
     if yesno(f"Does the physical controller now show {expected}"):i["verification"]="write_verified";i["access"]="read_write";i["current"]=value;save(p)
 
@@ -511,7 +524,17 @@ def write_carel(session):
     raw=int(round(value*float(i.get("scale",1))))&65535;print(f"WARNING: leaves controller changed. {n}={value:g}, token {i['token']}, raw=0x{raw:04X}")
     if not yesno("Send this value to the controller now",True):
         print("Write cancelled; nothing was sent.");return
-    d=PJEZ(session["connection"]["port"],session["connection"]["unit"]);ok=d.write_token(i["token"],raw,password);d.close();print("Write ACK received." if ok else "Write failed or no ACK.")
+    d=PJEZ(session["connection"]["port"],session["connection"]["unit"])
+    try:
+        ok=d.write_token(i["token"],raw,password)
+        if not ok:print("Write failed or no ACK.");return
+        print("Write ACK received. Reading the parameter back...");time.sleep(.25);readback=d.dump().get(i["token"])
+    finally:d.close()
+    if readback is None:print("WRITE NOT VERIFIED: ACK was received but no read-back value was returned.");return
+    print(f"Read-back: token {i['token']}, raw 0x{readback:04X}, decoded {decode_value(readback,i)} {i.get('units','')}")
+    if readback!=raw:print(f"WRITE NOT VERIFIED: expected raw 0x{raw:04X}, but read back 0x{readback:04X}.");return
+    print("Token read-back matches the value that was sent.")
+    if yesno(f"Does the physical controller show {value:g} {i.get('units','')}",True):i["verification"]="write_verified";i["access"]="read_write";i["current"]=value;save(p)
 
 def ensure_discovery(session):
     if session.get("discovery"):return session["discovery"]["values"]
