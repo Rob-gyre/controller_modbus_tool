@@ -71,18 +71,19 @@ The discovery result and active connection are reused rather than entered again.
 It supports existing profile parameters, new numeric values, Boolean/status
 points and manually known locations.
 
-Quick mapping first compares the parameter's current displayed value with all
-readable locations and common signed/scaled interpretations. One unique match can
-be saved as `value_matched` without changing the controller. If several values
-match, the wizard asks for a controlled keypad change and compares two snapshots.
-It suggests the signed interpretation and scale, then asks:
+Mapping is snapshot-first. After selecting a parameter, change only that
+parameter on the controller and press Enter. The tool rereads the unassigned
+locations and compares them with the saved baseline. A single changed location
+is offered automatically; when several change, only those candidates are shown.
+For documented enums the new raw value is interpreted from the profile. For an
+undocumented enum the tool asks for the new displayed text. For a numeric value
+it asks only for the new displayed value and derives the likely signed/scaled
+interpretation.
 
-```text
-Confirm/edit scale [10]:
-```
-
-Press Enter to accept the suggestion or type another scale. Profiles are saved
-as UTF-8 JSON in `profiles/`.
+After saving, the assigned location is removed from the working snapshot and
+the refreshed remaining snapshot is saved. Reopening the profile resumes from
+that reduced pool. The original timestamped discovery is retained unchanged as
+an audit record. Profiles are saved as UTF-8 JSON in `profiles/`.
 
 Candidate selection defaults to `R` (reject) rather than forcing the first
 candidate. Only exact before/after matches are presented as candidates.

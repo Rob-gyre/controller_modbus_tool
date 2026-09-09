@@ -186,7 +186,15 @@ def configure(previous=None):
     d=profile.get("connection",{})
     if proto=="modbus_rtu": conn={"port":ask("Serial port",d.get("port","/dev/ttyUSB0")),"slave":int(ask("Slave address",d.get("slave",1))),"baudrate":int(ask("Baud",d.get("baudrate",9600))),"parity":ask("Parity N/E/O",d.get("parity","N")).upper(),"stopbits":int(ask("Stop bits",d.get("stopbits",1))),"timeout":float(ask("Timeout",d.get("timeout",.6)))}
     else: conn={"port":ask("Serial port",d.get("port","/dev/ttyACM0")),"unit":int(ask("Unit",d.get("unit",1))),"baudrate":19200,"parity":"N","stopbits":2}
-    profile["connection"]=conn; save(profile); return {"protocol":proto,"profile":profile,"connection":conn,"discovery":None}
+    profile["connection"]=conn; save(profile);discovery=None
+    latest=profile.get("working_snapshot_file") or profile.get("latest_discovery_file")
+    if latest:
+        try:
+            candidate=(ROOT/latest).resolve()
+            if ROOT.resolve() in candidate.parents:discovery=json.loads(candidate.read_text(encoding="utf-8"))
+        except Exception as exc:print(f"Could not load previous discovery: {exc}")
+    if discovery:print(f"Loaded saved discovery: {latest}")
+    return {"protocol":proto,"profile":profile,"connection":conn,"discovery":discovery}
 
 def inst(c):
     d=minimalmodbus.Instrument(c["port"],c["slave"],mode=minimalmodbus.MODE_RTU); d.serial.baudrate=c["baudrate"]; d.serial.bytesize=8
@@ -221,7 +229,7 @@ def scan(session,kinds=None,ask_range=True,quiet=False):
     session["discovery"]={"profile":session["profile"]["name"],"captured":time.strftime("%Y-%m-%d %H:%M:%S"),"start":start,"end":end,"values":result}
     DISCOVERY_DIR.mkdir(exist_ok=True);stamp=time.strftime("%Y%m%d_%H%M%S");discovery_path=DISCOVERY_DIR/f"{pname(session['profile']['name'])}_{stamp}.json"
     discovery_path.write_text(json.dumps(session["discovery"],indent=2),encoding="utf-8")
-    session["profile"]["latest_discovery_file"]=str(discovery_path.relative_to(ROOT));save(session["profile"])
+    session["profile"]["latest_discovery_file"]=str(discovery_path.relative_to(ROOT));session["profile"].pop("working_snapshot_file",None);save(session["profile"])
     print(f"Discovery saved to {discovery_path}");return result
 
 def test(session):
@@ -454,6 +462,90 @@ def ensure_discovery(session):
 def current_snapshot(session,template):
     return refresh(session,template)
 
+def persist_working_snapshot(session,working):
+    DISCOVERY_DIR.mkdir(exist_ok=True);path=DISCOVERY_DIR/f"{pname(session['profile']['name'])}_working.json"
+    payload={"profile":session["profile"]["name"],"captured":time.strftime("%Y-%m-%d %H:%M:%S"),"working":True,"values":working}
+    path.write_text(json.dumps(payload,indent=2),encoding="utf-8")
+    session["discovery"]=payload;session["profile"]["working_snapshot_file"]=str(path.relative_to(ROOT));save(session["profile"])
+
+def unassigned_snapshot(session):
+    values=ensure_discovery(session)
+    if not values:return None
+    assigned={(item.get("register_type","holding"),int(item["address"])) for item in session["profile"].get("parameters",{}).values() if "address" in item}
+    working={kind:{int(address):raw for address,raw in locations.items() if (kind,int(address)) not in assigned} for kind,locations in values.items()}
+    print(f"Snapshot: {sum(len(x) for x in values.values())} readable, {len(assigned)} assigned, {sum(len(x) for x in working.values())} available.")
+    return working
+
+def changed_locations(before,after,boolean_only=False):
+    changes=[]
+    for kind,locations in before.items():
+        for address,old_raw in locations.items():
+            new_raw=after.get(kind,{}).get(address)
+            if new_raw is None or new_raw==old_raw:continue
+            if boolean_only and (old_raw not in (0,1) or new_raw not in (0,1)):continue
+            changes.append((kind,address,old_raw,new_raw))
+    return changes
+
+def choose_changed_location(changes):
+    if not changes:return None
+    if len(changes)==1:
+        c=changes[0];print(f"One changed location: {c[0]} {c[1]}, raw {c[2]} -> {c[3]}")
+        return c if yesno("Use this location",True) else None
+    print("Changed locations:")
+    for index,c in enumerate(changes,1):print(f" {index}) {c[0]} {c[1]} raw {c[2]} -> {c[3]}")
+    choice=ask("Select the parameter location, or R to reject","R")
+    if choice.lower()=="r":return None
+    try:return changes[int(choice)-1]
+    except (ValueError,IndexError):print("Invalid selection.");return None
+
+def map_snapshot_parameter(session,name,item,working,mode=None):
+    if item.get("high_risk"):
+        print("WARNING: This setting changes the controller application map.")
+        if not yesno("Include this high-risk parameter",False):return False
+    documented=item.get("documented_choices",{})
+    print(f"\nSelected: {name} - {item.get('description','')}")
+    if documented:
+        print("Documented settings:")
+        for code,meaning in documented.items():print(f" {code}) {meaning}")
+    print(f"Baseline snapshot ready; monitoring {sum(len(x) for x in working.values())} unassigned locations.")
+    pause(f"Change only {name} to another safe setting, exit the controller menu, then press ENTER")
+    after=refresh(session,working);changes=changed_locations(working,after,mode=="status")
+    selected=choose_changed_location(changes)
+    if not selected:print("No mapping saved.");return False
+    kind,address,old_raw,new_raw=selected
+    if documented or mode=="enum":
+        if documented:
+            enum=dict(documented);new_label=enum.get(str(new_raw),f"raw {new_raw}")
+            print(f"New raw value {new_raw}: {new_label}")
+        else:
+            new_label=ask(f"Text shown for raw {new_raw}");enum={str(new_raw):new_label}
+        item.update({"register_type":kind,"address":address,"scale":1,"scale_operation":"divide","signed":False,"enum":enum,"access":"read","verification":"change_verified"})
+    elif mode=="status":
+        state=ask("Physical state after the change ON/OFF","ON").upper();is_on=state=="ON"
+        item.update({"register_type":kind,"address":address,"scale":1,"scale_operation":"divide","signed":False,"units":"bool","access":"read","verification":"change_verified","on_value":new_raw if is_on else old_raw,"off_value":old_raw if is_on else new_raw})
+    else:
+        try:new_display=float(ask("New value shown on controller"))
+        except ValueError:print("A numeric displayed value is required. Nothing saved.");return False
+        interpretations=quick_candidates({kind:{address:new_raw}},new_display,item)
+        if len(interpretations)==1:
+            _,_,_,_,factor,signed,operation=interpretations[0]
+            print(f"Interpretation: {operation} by {factor}, signed={signed}")
+        else:
+            if interpretations:
+                for index,c in enumerate(interpretations,1):print(f" {index}) {c[6]} by {c[4]}, signed={c[5]}")
+                choice=ask("Select interpretation, or R to reject","R")
+                if choice.lower()=="r":return False
+                try:_,_,_,_,factor,signed,operation=interpretations[int(choice)-1]
+                except (ValueError,IndexError):return False
+            else:
+                operation=ask("Scale operation divide/multiply","divide").lower();factor=float(ask("Scale factor",1));signed=yesno("Signed 16-bit",item.get("minimum",0)<0 if isinstance(item.get("minimum"),(int,float)) else False)
+        item.update({"register_type":kind,"address":address,"scale":factor,"scale_operation":operation,"signed":signed,"access":"read","verification":"change_verified"})
+    session["profile"].setdefault("parameters",{})[name]=item
+    working.clear();working.update(after);working.get(kind,{}).pop(address,None)
+    persist_working_snapshot(session,working)
+    print(f"Saved {name} -> {kind} {address}. Unassigned locations remaining: {sum(len(x) for x in working.values())}")
+    return True
+
 def quick_candidates(values,target,item):
     candidates=[]
     prefer_signed=isinstance(item.get("minimum"),(int,float)) and item["minimum"]<0
@@ -627,7 +719,8 @@ def mapping_menu(session):
     if session["protocol"]=="carel_pjez":
         print("CAREL mappings use two F1 table dumps and can be repeated in one session.")
         map_carel_session(session);return
-    mapped=[]
+    mapped=[];working=unassigned_snapshot(session)
+    if not working:return
     while True:
         print("\nMAP PARAMETERS AND STATUS")
         print("1) Map existing profile parameter\n2) Add and map a new numeric value\n3) Add and map a Boolean/status")
@@ -635,8 +728,6 @@ def mapping_menu(session):
         choice=ask("Select",1)
         if choice=="6":print("\n".join(mapped) if mapped else "Nothing mapped in this session.");continue
         if choice=="5":manual_mapping(session);continue
-        values=ensure_discovery(session)
-        if not values:return
         if choice=="1":
             available=[(n,i) for n,i in session["profile"]["parameters"].items() if "address" not in i and "token" not in i]
             for x,(n,i) in enumerate(available,1):
@@ -644,15 +735,18 @@ def mapping_menu(session):
                 print(f" {x}) {n:<5} {i.get('description','')}{risk}")
             try:name,item=available[int(ask("Select parameter",1))-1]
             except (ValueError,IndexError):continue
-            if map_numeric_point(session,name,item,values):mapped.append(name)
+            mode="enum" if item.get("documented_choices") or isinstance(item.get("default_reference"),str) else "numeric"
+            if map_snapshot_parameter(session,name,item,working,mode):mapped.append(name)
         elif choice=="2":
             name=ask("Name");item={"description":ask("Description",name),"units":ask("Units",""),
                 "minimum":None,"maximum":None,"verification":"unmapped"}
-            if map_numeric_point(session,name,item,values):mapped.append(name)
+            if map_snapshot_parameter(session,name,item,working,"numeric"):mapped.append(name)
         elif choice=="3":
-            if map_status(session,values):mapped.append("Boolean/status")
+            name=ask("Status name");item={"description":ask("Description",name),"verification":"unmapped"}
+            if map_snapshot_parameter(session,name,item,working,"status"):mapped.append(name)
         elif choice=="4":
-            if map_new_enum(session,values):mapped.append("Text/enumerated value")
+            name=ask("Parameter name");item={"description":ask("Description",name),"verification":"unmapped"}
+            if map_snapshot_parameter(session,name,item,working,"enum"):mapped.append(name)
         else:print("Invalid selection.")
 
 def read_current(session,item,carel_values=None):
@@ -733,6 +827,10 @@ def export_profile(session):
     if latest:
         source=ROOT/latest
         if source.exists():shutil.copy2(source,folder/"latest_discovery.json")
+    working_file=profile.get("working_snapshot_file")
+    if working_file:
+        source=ROOT/working_file
+        if source.exists():shutil.copy2(source,folder/"unassigned_working_snapshot.json")
     print("\nEXPORT COMPLETE")
     print(f"JSON profile: {json_path}\nCSV map:      {csv_path}\nReadable map: {md_path}")
 
