@@ -302,6 +302,13 @@ def test(session):
     d=inst(session["connection"])
     try:
         candidates=[(i.get("register_type","holding"),i["address"]) for i in session["profile"]["parameters"].values() if "address" in i]
+        if not candidates:
+            print("This blank profile has no known test location yet.")
+            kind=ask("Register type to test: holding/input/coil/discrete","holding").lower()
+            if kind not in KINDS:print("Unknown register type.");return
+            try:address=int(ask("Register address to test",0))
+            except ValueError:return
+            candidates=[(kind,address)]
         for kind,address in candidates:
             v=readloc(d,kind,address)
             if v is not None:print(f"SUCCESS: {kind} {address} raw={v}");return
@@ -496,7 +503,7 @@ def edit_mapped_location(session):
         try:raw=d.dump().get(new_token)
         finally:d.close()
         if raw is None:print("The new token did not return a value; mapping was not changed.");return
-        print(f"New token {new_token} reads raw {raw}, decoded {decode_value(raw,item)} {item.get('units','')}")
+        print(f"New token {new_token} reads raw {raw}, decoded {display_value(raw,item)} {item.get('units','')}")
         if not yesno("Save this corrected token",True):return
         item["token"]=new_token;item["previous_location"]=old_location;item["verification"]="location_edited";save(p);return
     kind=ask(f"New register type (current {old_location})",item.get("register_type","holding")).lower()
@@ -511,7 +518,7 @@ def edit_mapped_location(session):
     if raw is None:print(f"No response from {kind} {address}; mapping was not changed.");return
     print(f"New location {kind} {address} reads raw {raw}, decoded {display_value(raw,item)} {item.get('units','')}")
     if not yesno("Save this corrected location",True):return
-    item["register_type"]=kind;item["address"]=address;item["previous_location"]=old_location;item["verification"]="location_edited";save(p)
+    item["register_type"]=kind;item["address"]=address;item["previous_location"]=old_location;item["verification"]="location_edited";save(p);rebuild_working_snapshot(session)
 
 def chex(text):
     r=0
@@ -602,7 +609,7 @@ def write_carel(session):
     current=None;reader=PJEZ(session["connection"]["port"],session["connection"]["unit"])
     try:current=reader.dump().get(i["token"])
     finally:reader.close()
-    print(f"Current controller value: raw {('0x%04X'%current) if current is not None else 'unavailable'}, decoded {decode_value(current,i)} {i.get('units','')}")
+    print(f"Current controller value: raw {('0x%04X'%current) if current is not None else 'unavailable'}, decoded {display_value(current,i)} {i.get('units','')}")
     if current is None:print("Current value could not be read; write cancelled.");return
     try:value=float(ask(f"New displayed value in {i.get('units','controller units')}"));password=int(ask("Password","0x16"),0)
     except ValueError:return
@@ -616,7 +623,7 @@ def write_carel(session):
         print("Write ACK received. Reading the parameter back...");time.sleep(.25);readback=d.dump().get(i["token"])
     finally:d.close()
     if readback is None:print("WRITE NOT VERIFIED: ACK was received but no read-back value was returned.");return
-    print(f"Read-back: token {i['token']}, raw 0x{readback:04X}, decoded {decode_value(readback,i)} {i.get('units','')}")
+    print(f"Read-back: token {i['token']}, raw 0x{readback:04X}, decoded {display_value(readback,i)} {i.get('units','')}")
     if readback!=raw:print(f"WRITE NOT VERIFIED: expected raw 0x{raw:04X}, but read back 0x{readback:04X}.");return
     print("Token read-back matches the value that was sent.")
     if yesno(f"Does the physical controller show {value:g} {i.get('units','')}",True):i["verification"]="write_verified";i["access"]="read_write";i["current"]=value;save(p)
@@ -631,9 +638,26 @@ def current_snapshot(session,template):
 
 def persist_working_snapshot(session,working):
     DISCOVERY_DIR.mkdir(exist_ok=True);path=DISCOVERY_DIR/f"{pname(session['profile']['name'])}_working.json"
-    payload={"profile":session["profile"]["name"],"connection":connection_fingerprint(session["protocol"],session["connection"]),"captured":time.strftime("%Y-%m-%d %H:%M:%S"),"working":True,"values":working}
+    payload={"profile":session["profile"]["name"],"connection":connection_fingerprint(session["protocol"],session["connection"]),"captured":time.strftime("%Y-%m-%d %H:%M:%S"),"working":True,"read_failures":[{"type":kind,"address":address} for kind,address in session.get("last_read_failures",[])],"values":working}
     path.write_text(json.dumps(payload,indent=2),encoding="utf-8")
     session["discovery"]=payload;session["profile"]["working_snapshot_file"]=str(path.relative_to(ROOT));save(session["profile"])
+
+def original_discovery_values(profile):
+    latest=profile.get("latest_discovery_file")
+    if not latest:return {}
+    try:
+        path=(ROOT/latest).resolve()
+        if ROOT.resolve() not in path.parents:return {}
+        return json.loads(path.read_text(encoding="utf-8")).get("values",{})
+    except Exception:return {}
+
+def rebuild_working_snapshot(session):
+    original=original_discovery_values(session["profile"]);current=(session.get("discovery") or {}).get("values",{})
+    combined={kind:{int(a):v for a,v in locations.items()} for kind,locations in original.items()}
+    for kind,locations in current.items():combined.setdefault(kind,{}).update({int(a):v for a,v in locations.items()})
+    assigned={(item.get("register_type","holding"),int(item["address"])) for item in session["profile"].get("parameters",{}).values() if "address" in item}
+    working={kind:{a:v for a,v in locations.items() if (kind,a) not in assigned} for kind,locations in combined.items()}
+    persist_working_snapshot(session,working)
 
 def unassigned_snapshot(session):
     values=ensure_discovery(session)
@@ -683,6 +707,7 @@ def map_fixed_parameter(session,name,item,working):
     if not matches:
         print(f"No unassigned location decodes to {shown:g} using the documented format ({operation} by {factor}, signed={signed}).")
         print("Nothing was saved. Run a fresh discovery if the snapshot may be out of date.");return False
+    ambiguous=len(matches)>1
     if len(matches)==1:
         kind,address,raw,_=matches[0]
         print(f"One matching unassigned location: {kind} {address}, raw {raw} -> {shown:g} {item.get('units','')}")
@@ -695,7 +720,7 @@ def map_fixed_parameter(session,name,item,working):
         try:kind,address,raw,_=matches[int(choice)-1]
         except (ValueError,IndexError):print("Invalid selection.");return False
     access="read_only" if item.get("read_only") else "read"
-    verification="value_matched_read_only" if item.get("read_only") else "value_matched_no_change"
+    verification=("probable_ambiguous_read_only" if item.get("read_only") else "probable_ambiguous_no_change") if ambiguous else ("value_matched_read_only" if item.get("read_only") else "value_matched_no_change")
     item.update({"register_type":kind,"address":address,"scale":factor,"scale_operation":operation,"signed":signed,"access":access,"verification":verification,"last_user_verified":shown})
     session["profile"].setdefault("parameters",{})[name]=item;working.get(kind,{}).pop(address,None);persist_working_snapshot(session,working)
     print(f"Saved no-change mapping: {name} -> {kind} {address}.")
@@ -1004,7 +1029,7 @@ def verify_menu(session):
         raw=read_current(session,item,carel_values)
         if raw is None:print(f"{name}: NO RESPONSE");counts["no response"]+=1;continue
         decoded=decode_value(raw,item);loc=item.get("token") or f"{item.get('register_type','holding')}:{item.get('address')}"
-        print(f"\nParameter {index} of {len(mapped)}: {name}\nLocation: {loc}\nRaw: {raw}\nDecoded: {decoded} {item.get('units','')}")
+        print(f"\nParameter {index} of {len(mapped)}: {name}\nLocation: {loc}\nRaw: {raw}\nDecoded: {display_value(raw,item)} {item.get('units','')}")
         if isinstance(decoded,str) and item.get("enum"):
             answer=ask("Does the controller show this text? Y/N/S","S").lower()
         else:
@@ -1065,11 +1090,13 @@ def export_profile(session):
     print("\nEXPORT COMPLETE")
     print(f"JSON profile: {json_path}\nCSV map:      {csv_path}\nReadable map: {md_path}")
 
-def profile_summary(profile):
+def profile_summary(session):
+    profile=session["profile"]
     items=list(profile.get("parameters",{}).values());mapped=[i for i in items if "address" in i or "token" in i]
     counts={}
     for item in mapped:counts[item.get("verification","unknown")]=counts.get(item.get("verification","unknown"),0)+1
-    print(f"Parameters: {len(items)} | Mapped: {len(mapped)} | Unmapped: {len(items)-len(mapped)}")
+    remaining=sum(len(x) for x in (session.get("discovery") or {}).get("values",{}).values()) if session.get("discovery") else "not loaded"
+    print(f"Parameters: {len(items)} | Mapped: {len(mapped)} | Unmapped: {len(items)-len(mapped)} | Unassigned locations: {remaining}")
     print("Verification: "+(", ".join(f"{k}={v}" for k,v in sorted(counts.items())) if counts else "none"))
 
 def diagnostics(session):
@@ -1084,7 +1111,7 @@ def diagnostics(session):
         if choices and any(v in (None,"") for v in choices.values()):issues.append(f"{name}: enum code has no meaning")
     for key,names in seen.items():
         if len(names)>1:issues.append(f"{key[0]} {key[1]} assigned to: {', '.join(names)}")
-    values=(session.get("discovery") or {}).get("values",{})
+    values=original_discovery_values(p)
     if values:
         for key,names in seen.items():
             if key[0] in values and key[1] not in {int(a) for a in values[key[0]]}:issues.extend(f"{n}: mapped location is absent from current discovery" for n in names)
@@ -1115,7 +1142,7 @@ def main():
     if not session:return 1
     while True:
         print("\n"+"="*64+f"\nACTIVE: {active(session)}\nPROFILE: {session['profile']['name']}\n"+"="*64)
-        profile_summary(session["profile"])
+        profile_summary(session)
         print("1) Test connection\n2) Read mapped values\n3) Discover readable locations\n4) Map parameters")
         print("5) Verify mapped parameters\n6) Controlled write verification\n7) View profile\n8) Change connection\n9) Diagnostics\n10) Export profile/map\n11) Edit mapped location\n0) Exit")
         try:

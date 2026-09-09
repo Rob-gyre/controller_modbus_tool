@@ -107,6 +107,20 @@ to confirm it against the physical controller. Text responses create enum
 mappings. Evidence states include `mapped_unverified`, `value_matched`,
 `user_verified`, `change_verified` and `write_verified`.
 
+Controlled writes first read and display the live current value. After writing,
+the tool rereads the same register/token and requires the raw read-back to match
+before offering physical-controller confirmation. Fixed/read-only and
+map-without-change parameters are excluded from the write list.
+
+Use `Edit mapped location` to correct a wrong address or CAREL token. The new
+location is test-read before saving, the previous location is retained in the
+profile history, and the unassigned working snapshot is rebuilt.
+
+Profile files use a versioned schema and atomic saves with a `.backup.json`
+recovery copy. Snapshot files contain a connection fingerprint and are not
+reused with different serial settings. Failed refresh reads retain their prior
+snapshot values and are recorded rather than silently deleting candidates.
+
 The XR77U profile also includes the enumerated choices documented in the
 Universal-R manual. During enum mapping the tool explains that the parameter
 label and displayed setting are different. For example, `dFd` is the parameter
