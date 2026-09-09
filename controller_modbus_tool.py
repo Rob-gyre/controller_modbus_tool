@@ -51,6 +51,31 @@ XR_UNMAPPED={
 "Prd":("Room probe display","C","Other",None,None,None),"dP2":("Evaporator probe display","C","Other",None,None,None),
 "dP3":("Third probe display","C","Other",None,None,None)}
 
+# Enumerated values documented in the Universal-R manual.  These are controller
+# setting codes, not discovered Modbus addresses.  The mapper still uses a
+# before/after scan to prove which register belongs to each parameter.
+XR_ENUMS={
+"tC":{"1":"On/off thermostat - cooling","2":"Off-cycle timed defrost","3":"Time/time forced defrost","4":"Time/temperature defrost","5":"Time/temperature defrost with fan delay","6":"Double evaporator defrost","7":"On/off thermostat - heating"},
+"PbC":{"0":"PTC probe","1":"NTC probe"},
+"ALC":{"0":"Alarms relative to setpoint","1":"Absolute alarms"},
+"dFd":{"0":"Real temperature","1":"Temperature at defrost start","2":"Setpoint","3":"dEF label","4":"dEG label"},
+"tdF":{"0":"Electrical defrost","1":"Hot-gas defrost"},
+"dPo":{"0":"After normal interval","1":"Immediate defrost after power-up"},
+"FnC":{"0":"Cycles with compressor; off in defrost","1":"Always on; off in defrost","2":"Cycles with compressor; on in defrost","3":"Always on; on in defrost"},
+"P2P":{"0":"Evaporator probe absent","1":"Evaporator probe present"},
+"P3P":{"0":"Third probe absent","1":"Third probe present"},
+"rES":{"0":"Decimal point shown","1":"No decimal point"},
+"CF":{"0":"Celsius","1":"Fahrenheit"},
+"Lod":{"0":"Thermostat probe","1":"Evaporator probe","2":"Third probe","3":"Setpoint"},
+"tbA":{"0":"Mute buzzer only","1":"Mute buzzer and alarm relay"},
+"diC":{"0":"Start defrost","1":"Door switch","2":"Auxiliary relay","3":"Energy saving","4":"Remote on/off","5":"Generic alarm","6":"Serious alarm"},
+"diP":{"0":"Closed-circuit activation","1":"Open-circuit activation"},
+"odC":{"0":"No output change","1":"Fan off","2":"Compressor off","3":"Compressor and fan off"},
+"oAC":{"0":"Alarm relay","1":"Heater/dead-band relay","2":"Auxiliary relay","3":"Second compressor","4":"Light output","5":"Second defrost output"},
+"rrd":{"0":"Do not restart regulation","1":"Restart regulation"},
+"onF":{"0":"Key disabled","1":"On/off enabled","2":"Energy-saving enabled"},
+"bEn":{"0":"Buzzer disabled","1":"Buzzer enabled"}}
+
 CAREL={"Pb1":("S11",10,True,"Probe 1","C"),"Pb2":("S21",10,True,"Probe 2","C"),"Pb3":("S31",10,True,"Probe 3","C"),
 "St":("S81",10,True,"Setpoint","C"),"rd":("S91",10,True,"Differential","C"),"LSE":("S:1",10,True,"Minimum setpoint","C"),
 "HSE":("S;1",10,True,"Maximum setpoint","C"),"/C1":("S51",10,True,"Probe 1 calibration","C"),"/C2":("S61",10,True,"Probe 2 calibration","C"),
@@ -94,6 +119,8 @@ def seed():
         ps={}
         for n,(a,sc,sg,d,u,g,cur,lo,hi) in XR_MAPPED.items(): ps[n]={"address":a,"register_type":"holding","scale":sc,"scale_operation":"divide","signed":sg,"description":d,"units":u,"group":g,"default_reference":cur,"minimum":lo,"maximum":hi,"access":"unknown","verification":"mapped_unverified"}
         for n,(d,u,g,cur,lo,hi) in XR_UNMAPPED.items(): ps[n]={"description":d,"units":u,"group":g,"default_reference":cur,"minimum":lo,"maximum":hi,"verification":"unmapped","high_risk":n=="tC"}
+        for n,choices in XR_ENUMS.items():
+            if n in ps: ps[n]["documented_choices"]=choices
         save({"name":"XR77U","protocol":"modbus_rtu","model":"XR77U / 2C310000","firmware":"5.9","connection":{"port":"/dev/ttyUSB0","slave":1,"baudrate":9600,"parity":"N","stopbits":1,"timeout":.6},"parameters":ps})
     if not (PROFILE_DIR/"carel_pjezc0p000.json").exists():
         ps={n:{"token":t,"scale":sc,"signed":sg,"description":d,"units":u,"verification":"live_confirmed","access":"read_write"} for n,(t,sc,sg,d,u) in CAREL.items()}
@@ -118,6 +145,9 @@ def get_profiles(protocol=None):
                     else:
                         for key,value in source.items():
                             if key not in items[n] or items[n][key] is None:items[n][key]=value;changed=True
+                for n,choices in XR_ENUMS.items():
+                    if n in items and items[n].get("documented_choices")!=choices:
+                        items[n]["documented_choices"]=choices;changed=True
                 for item in items.values():
                     if "current" in item and item.get("verification") not in ("user_verified","write_verified"):
                         item.pop("current",None);changed=True
@@ -450,7 +480,13 @@ def map_enum_point(session,name,item,values):
     if item.get("high_risk"):
         print("WARNING: This setting changes the controller application map.")
         if not yesno("Include this high-risk parameter",False):return False
-    original=ask("Controller current text",item.get("default_reference",""))
+    print(f"\n{name} is the controller parameter label: {item.get('description','')}")
+    choices=item.get("documented_choices",{})
+    if choices:
+        print("Documented settings:")
+        for code,meaning in choices.items(): print(f"  {code}) {meaning}")
+        print("The controller may show a short label (for example dEF) instead of the number.")
+    original=ask("Setting currently shown on controller",item.get("default_reference",""))
     print("Text/enum values cannot be matched from one snapshot because the raw code is not known yet.")
     before=current_snapshot(session,values)
     pause(f"Change {name} to a different safe option, exit the controller menu, then press ENTER")

@@ -92,6 +92,12 @@ to confirm it against the physical controller. Text responses create enum
 mappings. Evidence states include `mapped_unverified`, `value_matched`,
 `user_verified`, `change_verified` and `write_verified`.
 
+The XR77U profile also includes the enumerated choices documented in the
+Universal-R manual. During enum mapping the tool explains that the parameter
+label and displayed setting are different. For example, `dFd` is the parameter
+name while `dEF` is setting 3. A before/after read is still used to prove the
+actual Modbus address.
+
 Both divide scaling and multiply scaling are supported. For example, raw 80
 divided by 10 is 8.0, while raw 9 multiplied by 10 is 90.
 
